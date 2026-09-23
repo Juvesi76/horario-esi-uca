@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Horario ESI (UCA)</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper: #f6f7f5;
+    --paper-2: #ffffff;
+    --ink: #161a22;
+    --ink-muted: #5b6472;
+    --grid: #d8dce2;
+    --grid-strong: #b9c0cb;
+    --cobalt: #26399b;
+    --cobalt-ink: #1c2b78;
+    --cobalt-soft: #edeffa;
+    --cobalt-contrast: #ffffff;
+    --alert: #c4432b;
+    --alert-soft: #fbece7;
+    --alert-ink: #7a2a1b;
+    --focus: #26399b;
+    --radius-sm: 8px;
+    --radius-md: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #14161b;
+      --paper-2: #1b1e25;
+      --ink: #eceef3;
+      --ink-muted: #9aa2b1;
+      --grid: #2b3038;
+      --grid-strong: #3a404b;
+      --cobalt: #8b9cf5;
+      --cobalt-ink: #c4cdfb;
+      --cobalt-soft: #1e2440;
+      --cobalt-contrast: #12163b;
+      --alert: #e9836b;
+      --alert-soft: #3a2620;
+      --alert-ink: #ffd9cb;
+      --focus: #8b9cf5;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    background-image: repeating-linear-gradient(0deg, var(--grid) 0, var(--grid) 1px, transparent 1px, transparent 28px),
+                       repeating-linear-gradient(90deg, var(--grid) 0, var(--grid) 1px, transparent 1px, transparent 28px);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 { font-weight: 700; margin: 0; }
+  p { margin: 0; }
+  button { font: inherit; color: inherit; }
+  /* Reglas de autor con display:flex (icon-btn, dropzone, loading-box...)
+     ganan siempre al display:none nativo de [hidden] (origen autor > user
+     agent, sin importar especificidad) — sin esto, ocultar con el atributo
+     `hidden` dejaba de funcionar en cualquier elemento que también tuviera
+     una regla de display propia. Verificado con el DOM real: [hidden]
+     seguía computando display:flex antes de este arreglo. */
+  [hidden] { display: none !important; }
+  a { color: var(--cobalt); }
+  :focus-visible { outline: 2.5px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+  .shell {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    max-width: 480px;
+    margin: 0 auto;
+    background: var(--paper);
+  }
+  @media (min-width: 600px) {
+    body { display: flex; }
+    .shell {
+      margin: 24px auto;
+      min-height: calc(100vh - 48px);
+      border: 1px solid var(--grid-strong);
+      border-radius: var(--radius-md);
+      box-shadow: 0 12px 40px rgba(0,0,0,.12);
+      overflow: hidden;
+    }
+    /* Por debajo de 600px .shell llena la página real y es esta la que
+       hace scroll (ver más abajo por qué). A partir de aquí .shell simula
+       una "ventana" de app de altura fija con overflow:hidden para el
+       recorte de esquinas — dentro de esa ventana, main sí necesita su
+       propio scroll, si no el contenido que exceda la altura fija quedaría
+       recortado y sería inalcanzable. */
+    main { overflow-y: auto; }
+  }
+
+  .appbar {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 14px 16px 10px;
+    background: var(--paper);
+    position: sticky; top: 0; z-index: 5;
+  }
+  .icon-btn {
+    flex: none; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent; border-radius: 50%; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--cobalt-soft); }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .appbar-text { flex: 1; min-width: 0; }
+  .step-label { font-size: 12.5px; color: var(--ink-muted); margin-bottom: 2px; }
+  .appbar-text h1 { font-size: 19px; line-height: 1.25; }
+
+  .progress { display: flex; gap: 5px; padding: 0 16px 14px; }
+  .progress .seg { flex: 1; height: 4px; border-radius: 3px; background: var(--grid); }
+  .progress .seg.done { background: var(--cobalt); }
+  .progress.hidden { display: none; }
+
+  /* Sin overflow-y propio: por debajo de 600px .shell no tiene altura
+     fija (min-height:100%, sin tope), así que es la página entera la que
+     crece y hace scroll — un solo scroll, no uno anidado dentro de main.
+     A 600px+ sí se le da overflow-y:auto (ver media query de .shell). */
+  main { flex: 1; padding: 4px 16px 24px; }
+  .step[hidden] { display: none; }
+  .step-help { color: var(--ink-muted); font-size: 14.5px; margin-top: 6px; line-height: 1.45; }
+
+  /* Step 1: upload */
+  .dropzone {
+    margin-top: 18px; border: 2px dashed var(--grid-strong); border-radius: var(--radius-md);
+    padding: 30px 18px; text-align: center; background: var(--paper-2);
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  .dropzone.dragover { border-color: var(--cobalt); background: var(--cobalt-soft); }
+  .dropzone svg { width: 34px; height: 34px; color: var(--cobalt); }
+  .btn-primary {
+    background: var(--cobalt); color: var(--cobalt-contrast); border: none; border-radius: var(--radius-sm);
+    padding: 13px 20px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%;
+  }
+  .btn-primary:hover { background: var(--cobalt-ink); }
+  .btn-primary:disabled { background: var(--grid); color: var(--ink-muted); cursor: not-allowed; }
+  .dropzone .btn-primary { width: auto; padding: 12px 28px; }
+  .dropzone-hint { font-size: 13px; color: var(--ink-muted); }
+  .source-note { margin-top: 16px; font-size: 13.5px; color: var(--ink-muted); line-height: 1.5; }
+  .loading-box {
+    margin-top: 18px; padding: 34px 18px; text-align: center; display: flex; flex-direction: column;
+    align-items: center; gap: 14px; color: var(--ink-muted);
+  }
+  .spinner {
+    width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--grid);
+    border-top-color: var(--cobalt); animation: spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-box {
+    margin-top: 18px; padding: 16px; border-radius: var(--radius-md); background: var(--alert-soft);
+    color: var(--alert-ink); border: 1px solid var(--alert);
+  }
+  .error-box p { font-size: 14.5px; line-height: 1.5; }
+  .error-box .btn-secondary { margin-top: 12px; }
+  .btn-secondary {
+    background: transparent; border: 1.5px solid currentColor; border-radius: var(--radius-sm);
+    padding: 9px 16px; font-size: 14.5px; font-weight: 600; cursor: pointer;
+  }
+
+  /* Step 2: curso list */
+  .curso-group { margin-top: 22px; }
+  .curso-group-label { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+  .itin-note {
+    font-size: 13.5px; color: var(--ink-muted); background: var(--cobalt-soft); padding: 10px 12px;
+    border-radius: var(--radius-sm); margin-bottom: 8px; line-height: 1.45;
+  }
+  .combo-list { border-top: 1px solid var(--grid); }
+  .combo-row {
+    width: 100%; text-align: left; background: var(--paper-2); border: none; border-bottom: 1px solid var(--grid);
+    padding: 14px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer;
+  }
+  .combo-row:hover { background: var(--cobalt-soft); }
+  .combo-row .combo-main { display: block; font-size: 16px; font-weight: 600; }
+  .combo-row .combo-sub { display: block; font-size: 13.5px; color: var(--ink-muted); margin-top: 2px; }
+  .combo-row svg { flex: none; width: 18px; height: 18px; color: var(--ink-muted); }
+
+  /* Step 3: subjects */
+  .status-line {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-top: 14px; padding: 10px 12px; background: var(--paper-2); border: 1px solid var(--grid);
+    border-radius: var(--radius-sm); font-size: 13.5px;
+  }
+  .status-line strong { font-variant-numeric: tabular-nums; }
+  .conflict-banner {
+    position: relative;
+    margin-top: 14px; padding: 13px 40px 13px 14px; border-radius: var(--radius-md); background: var(--alert-soft);
+    border: 1px solid var(--alert); color: var(--alert-ink);
+  }
+  /* Choques que ya pasaron todos: se queda el dato, pero sin el tono de
+     alarma — reutiliza los tokens de una tarjeta normal en vez de definir
+     otra paleta, igual que en el HTML descargable. */
+  .conflict-banner.neutral { background: var(--paper-2); border-color: var(--grid); color: var(--ink); }
+  .conflict-banner .conflict-head { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14.5px; }
+  .conflict-banner svg { width: 18px; height: 18px; flex: none; }
+  .conflict-banner p.lede { font-size: 13.5px; margin-top: 5px; line-height: 1.45; }
+  .conflict-banner ul { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; }
+  .conflict-banner li { margin-bottom: 4px; line-height: 1.4; }
+  .conflict-banner .conflict-close {
+    position: absolute; top: 0; right: 0; width: 44px; height: 44px;
+    background: transparent; border: none; color: inherit; font-size: 20px; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .conflict-banner .conflict-close:focus-visible { outline: 2px solid currentColor; outline-offset: -4px; }
+  .conflict-reopen button {
+    background: transparent; border: 1px solid var(--grid); color: var(--ink);
+    border-radius: var(--radius-sm); padding: 8px 12px; font-size: 13.5px; cursor: pointer; min-height: 44px;
+    margin-top: 14px;
+  }
+
+  .subject-card {
+    margin-top: 16px; background: var(--paper-2); border: 1px solid var(--grid); border-radius: var(--radius-md);
+    padding: 14px;
+  }
+  .subject-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .subject-head h3 { font-size: 16.5px; }
+  .subject-head .acr { font-size: 12.5px; color: var(--ink-muted); background: var(--grid); padding: 2px 7px; border-radius: 6px; }
+  .type-row { margin-top: 12px; }
+  .type-row:first-of-type { margin-top: 0; }
+  .type-label { font-size: 13.5px; font-weight: 600; color: var(--ink-muted); margin-bottom: 6px; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chip {
+    border: 1.5px solid var(--grid-strong); background: var(--paper-2); color: var(--ink);
+    border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 600; cursor: pointer;
+    min-height: 38px;
+  }
+  .chip[aria-checked="true"] { background: var(--cobalt); border-color: var(--cobalt); color: var(--cobalt-contrast); }
+  .chip.chip-none { font-weight: 500; }
+  .chip.chip-none[aria-checked="true"] { background: var(--ink-muted); border-color: var(--ink-muted); }
+
+  .extra-block { margin-top: 26px; padding-top: 18px; border-top: 2px dashed var(--grid-strong); }
+  .extra-block-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  }
+  .extra-block-title { font-size: 14px; font-weight: 700; }
+  .btn-link {
+    background: none; border: none; padding: 0; color: var(--cobalt); font-size: 13.5px; font-weight: 600;
+    cursor: pointer; text-decoration: underline;
+  }
+  .add-block-prompt {
+    margin-top: 22px; padding: 16px; border: 1.5px dashed var(--grid-strong); border-radius: var(--radius-md);
+    text-align: center;
+  }
+  .add-block-prompt p { font-size: 14px; color: var(--ink-muted); margin-bottom: 10px; }
+
+  /* Footer action bar — estático, al final del flujo, NUNCA
+     position:sticky/fixed. `position:sticky; bottom:0` parecía correcto
+     (y lo fue mientras se probó solo con contenido largo, muchos
+     conflictos) pero es una trampa real con contenido CORTO: si `.shell`
+     no llega a superar una pantalla de alto, la posición "pegada" abajo
+     coincide con la posición natural del panel casi desde el principio,
+     así que el navegador lo pega arriba de golpe — tapando el final del
+     contenido incluso con `scrollY=0`, sin que haga falta scroll ninguno.
+     Verificado el solape real con `getBoundingClientRect()` en varias
+     posiciones de scroll (no solo mirando una captura): con la selección
+     de 6 conflictos (IG·C1+CAL·C1, más corta que las probadas antes con
+     16/21), el `.actionbar` (242px de alto) ya solapaba el último `<li>`
+     de la lista en `scrollY=0`. Nada de padding-bottom calculado arreglaba
+     esto de raíz: el problema es que el panel se comporta como fijo
+     exactamente cuando el contenido es corto, que es el caso que importa.
+     Con `position:static` el panel es un bloque más al final de `.shell`,
+     nunca se superpone a nada — el usuario que ya llegó al resultado no
+     necesita el botón de descarga visible en todo momento, solo poder
+     leerlo todo y bajar hasta él. */
+  .actionbar {
+    position: static; background: var(--paper); border-top: 1px solid var(--grid);
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    margin-top: 8px;
+  }
+  .actionbar[hidden] { display: none; }
+  .actionbar-help { font-size: 13px; color: var(--ink-muted); text-align: center; margin-bottom: 8px; }
+  .actionbar .btn-stack { display: flex; flex-direction: column; gap: 10px; }
+
+  /* Aviso de "no es oficial" + enlace al código — siempre visible, en
+     todos los pasos, no solo en el resultado final (a diferencia de
+     `.actionbar`, que solo aparece en el paso 4). */
+  .app-footer {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--grid); text-align: center;
+  }
+  .app-footer p { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; margin: 0; }
+  .app-footer a { color: inherit; text-decoration: underline; }
+
+  /* Step 4: result */
+  .avisos-note {
+    margin-top: 16px; padding: 11px 13px; border-radius: var(--radius-sm); background: var(--paper-2);
+    border: 1px solid var(--grid); font-size: 13px; color: var(--ink-muted); line-height: 1.5;
+  }
+  /* Sin altura fija ni scroll propio: el iframe se ajusta a la altura real
+     de su contenido (ver ajustarAlturaPreview en el script) para que sea la
+     página entera la que haga scroll, no el recuadro por dentro — un scroll
+     anidado en móvil es incómodo, encontrado con una captura real a 380px. */
+  .preview-frame {
+    margin-top: 16px; width: 100%; min-height: 200px; border: 1px solid var(--grid);
+    border-radius: var(--radius-md); overflow: hidden; background: var(--paper-2);
+  }
+  .preview-frame iframe { width: 100%; height: 200px; border: none; display: block; }
+  .download-btn {
+    display: block; width: 100%; text-align: left; background: var(--paper-2); border: 1.5px solid var(--grid-strong);
+    border-radius: var(--radius-sm); padding: 12px 14px; cursor: pointer;
+  }
+  .download-btn strong { display: block; font-size: 15px; }
+  .download-btn span { display: block; font-size: 12.5px; color: var(--ink-muted); margin-top: 2px; }
+  .download-btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: var(--cobalt-contrast); }
+  .download-btn.primary span { color: var(--cobalt-contrast); opacity: .85; }
+  .restart-link {
+    display: block; width: 100%; text-align: center; background: transparent; border: none; margin-top: 6px;
+    padding: 10px; font-size: 14px; color: var(--ink-muted); text-decoration: underline; cursor: pointer;
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+</style>
+</head>
+<body>
+<div class="shell" id="app">
+  <header class="appbar">
+    <button type="button" id="btn-back" class="icon-btn" aria-label="Volver al paso anterior" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div class="appbar-text">
+      <p class="step-label" id="step-label">Paso 1 de 3</p>
+      <h1 id="step-heading">Sube el horario</h1>
+    </div>
+    <button type="button" id="btn-restart-icon" class="icon-btn" aria-label="Empezar de nuevo" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 1 3 6.7M3 12v5h5"/></svg>
+    </button>
+  </header>
+  <div class="progress" id="progress">
+    <span class="seg" data-n="1"></span><span class="seg" data-n="2"></span><span class="seg" data-n="3"></span>
+  </div>
+  <p class="sr-only" role="status" aria-live="polite" id="live-status"></p>
+
+  <main id="main">
+    <section class="step" id="step-1">
+      <p class="step-help">Súbelo tal cual lo descargas. Lo enviamos a nuestro servidor para leerlo. Tu selección de asignaturas no se guarda. El horario, que es un documento público de la ESI, se guarda temporalmente en memoria para que cargue más rápido a tus compañeros.</p>
+
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        <label class="btn-primary" for="file-input" id="pick-label">Elegir PDF</label>
+        <input type="file" id="file-input" accept="application/pdf" class="sr-only">
+        <p class="dropzone-hint">o arrástralo aquí</p>
+      </div>
+
+      <p class="source-note">
+        ¿No lo tienes a mano? Se descarga desde la web de horarios de tu Escuela — el PDF con tu curso y grupos, tal cual lo publica la ESI.
+      </p>
+
+      <div class="loading-box" id="loading-box" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loading-text">Leyendo el horario…</p>
+      </div>
+
+      <div class="error-box" id="upload-error" hidden role="alert">
+        <p id="upload-error-text"></p>
+        <button type="button" class="btn-secondary" id="upload-retry">Elegir otro PDF</button>
+      </div>
+    </section>
+
+    <section class="step" id="step-2" hidden>
+      <p class="step-help" id="step2-help">Elige tu curso y semestre. Si ves varias tarjetas para el mismo curso, corresponden a itinerarios distintos.</p>
+      <div id="curso-list"></div>
+    </section>
+
+    <section class="step" id="step-3" hidden>
+      <p class="step-help" id="step3-context"></p>
+      <div class="status-line" id="status-line" aria-live="polite">
+        <span id="status-text">0 de 0 tipos elegidos</span>
+      </div>
+      <div id="conflict-banner-live"></div>
+      <div id="subject-list"></div>
+    </section>
+
+    <section class="step" id="step-4" hidden>
+      <p class="step-help">Este es tu horario con fechas reales, ya listo para guardar o llevar en el móvil.</p>
+      <div id="conflict-banner-final"></div>
+      <div id="avisos-note"></div>
+      <div class="preview-frame"><iframe id="preview-iframe" title="Vista previa de tu calendario"></iframe></div>
+    </section>
+  </main>
+
+  <footer class="actionbar" id="actionbar" hidden>
+    <p class="actionbar-help" id="actionbar-help"></p>
+    <div id="actionbar-content"></div>
+  </footer>
+
+  <footer class="app-footer">
+    <p>Esta herramienta no es oficial de la UCA ni de la ESI. Ante cualquier duda sobre tu horario, consulta el que publica la ESI. ·
+      <!-- TODO: rellenar con la URL real del repositorio público -->
+      <a href="#" id="footer-source-link" rel="noopener">Código fuente</a>
+      (GPLv3 — usa PyMuPDF, AGPL-3.0)
+    </p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const TYPE_LABELS = { A: "Teoría", B: "Problemas", C: "Prácticas de ordenador", D: "Laboratorio", X: "Teórico-prácticas" };
+  const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+
+  const state = {
+    step: 1,
+    file: null,
+    catalog: null,
+    // blocks[0] es el curso principal (paso 2 normal). blocks[1+] se añaden
+    // desde el paso 3 con "+ Añadir asignaturas de otro curso" — cada uno es
+    // un curso/semestre/itinerario distinto, para cualquier alumno que
+    // curse asignaturas de otro curso a la vez (repetir una asignatura es
+    // un motivo, pero no el único: adelantar créditos, cambio de plan,
+    // optativas de otro curso... no se asume el motivo). Cada bloque tiene
+    // su propio mapa de selección por acrónimo: el mismo acrónimo puede
+    // existir en dos bloques distintos (p.ej. IP en 1ºA y en 1ºB) con
+    // grupos distintos, así que no puede compartirse un único mapa global
+    // por acrónimo.
+    blocks: [],   // [{ combo, selections: { acronimo -> { curso, itinerario, nombre, tipos } } }, ...]
+    addingBlock: false,   // true mientras el paso 2 se usa para AÑADIR un bloque, no para elegir el principal
+    liveConflicts: [],
+    liveSignature: "",
+    result: null,
+  };
+
+  // Cuánto hace del último contacto real con el servidor — señal para
+  // distinguir, en el paso 1, "el servidor estaba dormido" (Render duerme
+  // el servicio gratuito tras ~15 min sin peticiones) de "es la primera
+  // vez que se lee ESTE PDF" (servidor despierto, pero el parseo tarda
+  // unos segundos la primera vez). Arranca en el momento en que carga el script: si la página
+  // se acaba de servir, el servidor está despierto de verdad, no solo
+  // probablemente.
+  let lastServerContactAt = Date.now();
+  const RENDER_SLEEP_THRESHOLD_MS = 14 * 60 * 1000; // margen bajo los ~15 min reales
+  function markServerContact() { lastServerContactAt = Date.now(); }
+
+  // Un solo reintento automático si la petición falla por completo (error
+  // de red) o el servidor responde 502/503/504 — típico mientras Render
+  // termina de arrancar el contenedor tras un rato dormido. Solo UNA vez:
+  // si el segundo intento también falla, es un problema real, no cuestión
+  // de esperar un poco más. `opts.body` puede ser un FormData con un
+  // File/Blob dentro — a diferencia de un stream, un Blob es releíble, así
+  // que reutilizar el mismo `opts` en el reintento es seguro.
+  async function fetchConReintento(url, opts) {
+    try {
+      const res = await fetch(url, opts);
+      if ([502, 503, 504].includes(res.status)) throw new Error(`http_${res.status}`);
+      return res;
+    } catch (err) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return fetch(url, opts);
+    }
+  }
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props, children) => {
+    const node = document.createElement(tag);
+    if (props) for (const k in props) {
+      if (k === "class") node.className = props[k];
+      else if (k === "html") node.innerHTML = props[k];
+      else if (k.startsWith("on")) node.addEventListener(k.slice(2), props[k]);
+      else node.setAttribute(k, props[k]);
+    }
+    (children || []).forEach((c) => node.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+    return node;
+  };
+
+  function announce(text) { $("live-status").textContent = text; }
+
+  function fechaLarga(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    return `${d} de ${MESES[m - 1]} de ${y}`;
+  }
+
+  // ---------- Navegación entre pasos ----------
+
+  const STEP_META = {
+    1: { label: "Paso 1 de 3", heading: "Sube el horario" },
+    2: { label: "Paso 2 de 3", heading: "¿Qué estudias?" },
+    3: { label: "Paso 3 de 3", heading: "Elige tus grupos" },
+    4: { label: "", heading: "Tu horario" },
+  };
+
+  function setStep(n) {
+    state.step = n;
+    for (let i = 1; i <= 4; i++) $("step-" + i).hidden = i !== n;
+
+    const meta = STEP_META[n];
+    $("step-label").textContent = meta.label;
+    $("step-heading").textContent = meta.heading;
+    $("btn-back").hidden = n === 1;
+    $("btn-restart-icon").hidden = n !== 4;
+    $("progress").classList.toggle("hidden", n === 4);
+    for (let i = 1; i <= 3; i++) {
+      document.querySelector(`.seg[data-n="${i}"]`).classList.toggle("done", i <= n);
+    }
+    announce(`${meta.label}${meta.label ? ": " : ""}${meta.heading}`);
+    window.scrollTo(0, 0);
+    updateActionbar();
+  }
+
+  function updateActionbar() {
+    const bar = $("actionbar");
+    const content = $("actionbar-content");
+    const help = $("actionbar-help");
+    content.innerHTML = "";
+    help.textContent = "";
+
+    if (state.step === 3) {
+      bar.hidden = false;
+      const { complete, anyChosen } = selectionCompleteness();
+      const btn = el("button", { class: "btn-primary", type: "button", onclick: onGenerateTap }, ["Ver mi calendario"]);
+      btn.disabled = !(complete && anyChosen);
+      content.appendChild(btn);
+      if (!complete) help.textContent = "Elige o descarta cada tipo para continuar.";
+      else if (!anyChosen) help.textContent = "Elige al menos un grupo para generar tu horario.";
+    } else if (state.step === 4) {
+      bar.hidden = false;
+      const htmlBtn = el("button", { class: "download-btn primary", type: "button", onclick: downloadHtml }, [
+        el("strong", null, ["Descargar calendario (HTML)"]),
+        el("span", null, ["Para abrir en el navegador, en el móvil o el ordenador."]),
+      ]);
+      const icsBtn = el("button", { class: "download-btn", type: "button", onclick: downloadIcs }, [
+        el("strong", null, ["Añadir al móvil (.ics)"]),
+        el("span", null, ["Ábrelo para importarlo en Google Calendar, Apple Calendar u Outlook."]),
+      ]);
+      const restart = el("button", { class: "restart-link", type: "button", onclick: resetAll }, ["Empezar de nuevo"]);
+      const stack = el("div", { class: "btn-stack" }, [htmlBtn, icsBtn, restart]);
+      content.appendChild(stack);
+    } else {
+      bar.hidden = true;
+    }
+  }
+
+  $("btn-back").addEventListener("click", () => {
+    if (state.step === 2) {
+      if (state.addingBlock) {
+        state.addingBlock = false;
+        renderStep3();
+        setStep(3);
+      } else {
+        setStep(1);
+      }
+    }
+    else if (state.step === 3) setStep(2);
+    else if (state.step === 4) setStep(3);
+  });
+  $("btn-restart-icon").addEventListener("click", resetAll);
+
+  function resetAll() {
+    state.file = null;
+    state.catalog = null;
+    state.blocks = [];
+    state.addingBlock = false;
+    state.liveConflicts = [];
+    state.liveSignature = "";
+    state.result = null;
+    $("file-input").value = "";
+    $("upload-error").hidden = true;
+    $("loading-box").hidden = true;
+    $("dropzone").hidden = false;
+    setStep(1);
+  }
+
+  // ---------- Paso 1: subir PDF ----------
+
+  const dropzone = $("dropzone");
+  const fileInput = $("file-input");
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+  ["dragover", "dragenter"].forEach((evt) =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add("dragover"); })
+  );
+  ["dragleave", "drop"].forEach((evt) =>
+    dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove("dragover"); })
+  );
+  dropzone.addEventListener("drop", (e) => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+
+  $("upload-retry").addEventListener("click", () => {
+    $("upload-error").hidden = true;
+    $("dropzone").hidden = false;
+    fileInput.value = "";
+  });
+
+  function handleFile(file) {
+    state.file = file;
+    $("upload-error").hidden = true;
+    $("dropzone").hidden = true;
+    $("loading-box").hidden = false;
+    uploadCatalog();
+  }
+
+  const MSG_LEYENDO = "Leyendo el horario…";
+  const MSG_SERVIDOR_DESPERTANDO = "El servidor se está despertando: la primera visita tras un rato sin uso puede tardar cerca de un minuto.";
+  const MSG_PRIMERA_LECTURA = "Esto puede tardar unos segundos: es la primera vez que se lee este horario concreto.";
+
+  async function uploadCatalog() {
+    // Si ya sabemos que probablemente está dormido, no hace falta esperar
+    // a que la petición vaya lenta para decirlo — la regla es "en cuanto
+    // se sepa", no solo "si acaba fallando".
+    const probablyAsleep = Date.now() - lastServerContactAt > RENDER_SLEEP_THRESHOLD_MS;
+    $("loading-text").textContent = probablyAsleep ? MSG_SERVIDOR_DESPERTANDO : MSG_LEYENDO;
+    // Si NO sabíamos que estaba dormido, la petición puede seguir tardando
+    // por dos motivos distintos que el alumno no tiene por qué distinguir
+    // él mismo: el PDF no estaba en caché (unos segundos, normal) o el
+    // servidor sí estaba dormido pero el reloj de inactividad no lo
+    // detectó (p.ej. otra pestaña lo mantuvo despierto hasta hace poco).
+    // Pasados unos segundos sin respuesta, se asume lo más probable según
+    // la misma señal de inactividad.
+    const slowTimer = probablyAsleep ? null : setTimeout(() => {
+      $("loading-text").textContent = MSG_PRIMERA_LECTURA;
+    }, 4000);
+    try {
+      const fd = new FormData();
+      fd.append("pdf", state.file);
+      const res = await fetchConReintento("/api/catalogo", { method: "POST", body: fd });
+      clearTimeout(slowTimer);
+      markServerContact();
+      if (!res.ok) {
+        showUploadError(await friendlyUploadError(res));
+        return;
+      }
+      state.catalog = await res.json();
+      $("loading-box").hidden = true;
+      $("loading-text").textContent = MSG_LEYENDO;
+      renderStep2();
+      setStep(2);
+    } catch (err) {
+      clearTimeout(slowTimer);
+      $("loading-text").textContent = MSG_LEYENDO;
+      showUploadError("No hemos podido conectar con el servidor. Comprueba tu conexión y vuelve a intentarlo.");
+    }
+  }
+
+  async function friendlyUploadError(res) {
+    let code = null;
+    try {
+      const body = await res.json();
+      if (body && body.detail && body.detail.error) code = body.detail.error;
+    } catch (e) { /* respuesta sin JSON, se trata como desconocido */ }
+
+    if (code === "archivo_no_es_pdf") return "Este archivo no es un PDF. Elige el PDF de horarios que descargaste de la ESI.";
+    if (code === "pdf_no_reconocido") return "Este PDF no parece un horario de la ESI: no hemos encontrado ninguna asignatura dentro. Comprueba que es el archivo correcto.";
+    if (code === "pdf_demasiado_grande") return "Este PDF pesa más de lo esperado. Comprueba que sea el archivo correcto de horarios.";
+    if (code === "pdf_demasiadas_paginas") return "Este PDF tiene muchas más páginas de las esperadas para un horario. Comprueba que es el archivo correcto.";
+    if (code === "procesado_demasiado_lento") return "Leer este PDF está tardando demasiado. Vuelve a intentarlo en un momento.";
+    if (res.status >= 500) return "Algo ha fallado en el servidor al leer el PDF. Vuelve a intentarlo en un momento.";
+    return "No hemos reconocido el formato de este PDF. Prueba con el PDF oficial de horarios de la ESI; si el problema sigue, avísanos.";
+  }
+
+  function showUploadError(message) {
+    $("loading-box").hidden = true;
+    $("upload-error-text").textContent = message;
+    $("upload-error").hidden = false;
+  }
+
+  // ---------- Paso 2: elegir curso ----------
+
+  function comboKey(combo) { return `${combo.curso}|${combo.semestre}|${combo.itinerario || ""}`; }
+
+  // 1º y 2º están partidos en dos páginas del PDF (cohorte A y cohorte B,
+  // p.ej. "1ºA"/"1ºB") con la MISMA lista de asignaturas y, dentro de cada
+  // tipo, códigos de grupo que no se pisan entre sí (p.ej. Teoría A1 en A,
+  // A2 en B) — verificado esta sesión sobre las 4 páginas de 1º y las 4 de
+  // 2º: mismo conjunto de asignaturas, mismo tipo de grupo por letra, y los
+  // pocos códigos que SÍ coinciden en texto entre A y B (4 casos: EST C7,
+  // AC D7, AC C5, SO B1) son la MISMA sesión (mismo día/hora/aula/semanas
+  // activas) en ambas páginas — una práctica compartida entre cohortes, no
+  // una colisión de dos clases distintas bajo la misma etiqueta. Un alumno
+  // no piensa "soy de 1ºA", piensa "soy de 1º y me tocó el A1" — por eso el
+  // paso 2 fusiona ambas páginas en una sola tarjeta "1º · Semestre N" y el
+  // paso 3 muestra los grupos de las dos cohortes juntos en la misma fila.
+  function isCohortCurso(curso) { return /^[12]º[AB]$/.test(curso); }
+  function baseCursoLabel(curso) { return curso.slice(0, -1); }
+
+  function mergeCombo(comboA, comboB) {
+    const codeOrigin = {};
+    const byAcrA = Object.fromEntries(comboA.asignaturas.map((s) => [s.acronimo, s]));
+    const byAcrB = Object.fromEntries(comboB.asignaturas.map((s) => [s.acronimo, s]));
+    const acronimos = [...new Set([...Object.keys(byAcrA), ...Object.keys(byAcrB)])].sort();
+    const asignaturas = acronimos.map((acronimo) => {
+      const sa = byAcrA[acronimo], sb = byAcrB[acronimo];
+      const nombre = (sa || sb).nombre;
+      const letras = [...new Set([...(sa ? Object.keys(sa.grupos) : []), ...(sb ? Object.keys(sb.grupos) : [])])];
+      const grupos = {};
+      letras.forEach((letra) => {
+        const ga = sa && sa.grupos[letra];
+        const gb = sb && sb.grupos[letra];
+        const codigos = new Set();
+        (ga ? ga.codigos : []).forEach((code) => {
+          codigos.add(code);
+          codeOrigin[`${acronimo}|${letra}|${code}`] = comboA.curso;
+        });
+        (gb ? gb.codigos : []).forEach((code) => {
+          const key = `${acronimo}|${letra}|${code}`;
+          if (key in codeOrigin) {
+            // Código compartido por texto entre las dos cohortes: solo es
+            // seguro fundirlo bajo un único chip si es de verdad la misma
+            // sesión en las dos páginas — verificado con el PDF de
+            // referencia, pero eso no garantiza nada para un PDF distinto.
+            // `sesiones` trae, por código, la lista
+            // de (día/hora/aula/semanas) tal cual la ve el backend — si no
+            // coincide, NO se puede confiar en fundirlo en silencio.
+            const sesA = (ga && ga.sesiones && ga.sesiones[code]) || [];
+            const sesB = (gb && gb.sesiones && gb.sesiones[code]) || [];
+            const mismaSesion = sesA.length > 0 && JSON.stringify(sesA) === JSON.stringify(sesB);
+            if (!mismaSesion) {
+              console.warn(
+                `[horario-uca] Código de grupo "${code}" (${acronimo}, ${letra}) aparece en ` +
+                `${comboA.curso} y ${comboB.curso} con SESIONES DISTINTAS — fundirlos bajo un ` +
+                `único chip escondería cuál de las dos clases se está eligiendo. Sesiones ${comboA.curso}: ` +
+                `${JSON.stringify(sesA)} · Sesiones ${comboB.curso}: ${JSON.stringify(sesB)}`
+              );
+            }
+            // Se mantiene el origen de A ya asignado en cualquier caso —
+            // resolver a una sola cohorte es la única forma de seguir
+            // generando un SubjectSelection válido, pero el aviso de
+            // arriba dice claramente que esa elección puede ser errónea.
+          } else {
+            codigos.add(code);
+            codeOrigin[key] = comboB.curso;
+          }
+        });
+        grupos[letra] = { tipo: (ga || gb).tipo, codigos: [...codigos].sort() };
+      });
+      return { acronimo, nombre, grupos };
+    });
+    return {
+      curso: baseCursoLabel(comboA.curso),
+      semestre: comboA.semestre,
+      itinerario: null,
+      academic_year: comboA.academic_year,
+      asignaturas,
+      merged: true,
+      codeOrigin,
+    };
+  }
+
+  // Junta las páginas de cohorte A/B en una tarjeta por (curso base,
+  // semestre); si por lo que sea solo existe una de las dos cohortes (no
+  // ocurre en el PDF de referencia, pero no hay que asumirlo), se muestra
+  // sin fusionar en vez de perderla. Recorre el catálogo en su orden
+  // original y solo emite la tarjeta fusionada la primera vez que aparece
+  // cualquiera de las dos cohortes — así el orden de la lista (1º, 2º, 3º,
+  // 4º, el mismo que trae `/api/catalogo`) no cambia por fusionar.
+  function buildDisplayCombos(catalog) {
+    const cohortPairs = new Map();
+    catalog.forEach((c) => {
+      if (isCohortCurso(c.curso) && !c.itinerario) {
+        const key = `${baseCursoLabel(c.curso)}|${c.semestre}`;
+        if (!cohortPairs.has(key)) cohortPairs.set(key, {});
+        cohortPairs.get(key)[c.curso.slice(-1)] = c;
+      }
+    });
+    const emitted = new Set();
+    const display = [];
+    catalog.forEach((c) => {
+      if (isCohortCurso(c.curso) && !c.itinerario) {
+        const key = `${baseCursoLabel(c.curso)}|${c.semestre}`;
+        if (emitted.has(key)) return;
+        emitted.add(key);
+        const pair = cohortPairs.get(key);
+        display.push(pair.A && pair.B ? mergeCombo(pair.A, pair.B) : (pair.A || pair.B));
+      } else {
+        display.push(c);
+      }
+    });
+    return display;
+  }
+
+  function renderStep2() {
+    const list = $("curso-list");
+    list.innerHTML = "";
+
+    $("step2-help").textContent = state.addingBlock
+      ? "Elige el curso y semestre de la asignatura que quieres añadir. Se sumará a tu selección sin tocar lo que ya tenías marcado."
+      : "Elige tu curso y semestre. Si ves varias tarjetas para el mismo curso, corresponden a itinerarios distintos.";
+
+    const usedKeys = new Set(state.blocks.map((b) => comboKey(b.combo)));
+    const displayCombos = buildDisplayCombos(state.catalog);
+    const catalog = state.addingBlock ? displayCombos.filter((c) => !usedKeys.has(comboKey(c))) : displayCombos;
+
+    const byCurso = new Map();
+    catalog.forEach((c) => {
+      if (!byCurso.has(c.curso)) byCurso.set(c.curso, []);
+      byCurso.get(c.curso).push(c);
+    });
+
+    if (state.addingBlock && byCurso.size === 0) {
+      list.appendChild(el("p", { class: "step-help" }, ["Ya has añadido todos los cursos y semestres de este horario."]));
+      return;
+    }
+
+    for (const [curso, combos] of byCurso) {
+      combos.sort((a, b) => a.semestre - b.semestre || (a.itinerario || "").localeCompare(b.itinerario || ""));
+      const group = el("div", { class: "curso-group" }, [
+        el("p", { class: "curso-group-label" }, [`Curso ${curso}`]),
+      ]);
+      const withItin = combos.some((c) => c.itinerario);
+      if (withItin) {
+        group.appendChild(el("p", { class: "itin-note" }, [
+          "Este curso se divide en itinerarios: especializaciones dentro de la carrera. Elige el tuyo.",
+        ]));
+      }
+      const rows = el("div", { class: "combo-list" });
+      combos.forEach((combo) => {
+        const sub = [`Semestre ${combo.semestre}`];
+        if (combo.itinerario) sub.push(combo.itinerario);
+        rows.appendChild(el("button", { class: "combo-row", type: "button", onclick: () => chooseCombo(combo) }, [
+          el("span", null, [
+            el("span", { class: "combo-main" }, [curso]),
+            el("span", { class: "combo-sub" }, [sub.join(" · ")]),
+          ]),
+          el("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", html: '<path d="M9 18l6-6-6-6"/>' }),
+        ]));
+      });
+      group.appendChild(rows);
+      list.appendChild(group);
+    }
+  }
+
+  function buildBlockSelections(combo, defaultValue) {
+    const selections = {};
+    combo.asignaturas.forEach((s) => {
+      const tipos = {};
+      Object.keys(s.grupos).forEach((letra) => { tipos[letra] = defaultValue; });
+      // Bloque fusionado (1º/2º, cohortes A+B): no hay un único `curso`
+      // para la asignatura, cada grupo elegido resuelve el suyo por su
+      // cuenta contra `combo.codeOrigin` (ver buildPayload) — se deja a
+      // `null` aquí para no mandar por error el pseudo-curso "1º"/"2º".
+      const curso = combo.merged ? null : combo.curso;
+      selections[s.acronimo] = { curso, itinerario: combo.itinerario, nombre: s.nombre, tipos };
+    });
+    return selections;
+  }
+
+  function resolveGroupCurso(combo, acronimo, letra, code, fallbackCurso) {
+    if (combo.codeOrigin) {
+      const origin = combo.codeOrigin[`${acronimo}|${letra}|${code}`];
+      if (origin) return origin;
+    }
+    return fallbackCurso;
+  }
+
+  function chooseCombo(combo) {
+    if (state.addingBlock) {
+      // Curso añadido: todos los tipos se marcan "no lo curso" de entrada
+      // — quien añade otro curso normalmente busca una o dos asignaturas
+      // concretas, no todas, y no debería tener que descartar quince a
+      // mano. El contador de "elegidos" ya los cuenta como resueltos.
+      state.blocks.push({ combo, selections: buildBlockSelections(combo, "NONE") });
+      state.addingBlock = false;
+    } else {
+      state.blocks = [{ combo, selections: buildBlockSelections(combo, null) }];
+    }
+    state.liveConflicts = [];
+    state.liveSignature = "";
+    renderStep3();
+    setStep(3);
+  }
+
+  // ---------- Paso 3: elegir grupos ----------
+
+  function renderSubjectCard(blockIndex, subject) {
+    const card = el("div", { class: "subject-card" }, [
+      el("div", { class: "subject-head" }, [
+        el("h3", null, [subject.nombre]),
+        el("span", { class: "acr" }, [subject.acronimo]),
+      ]),
+    ]);
+    Object.keys(subject.grupos).sort().forEach((letra) => {
+      const grupo = subject.grupos[letra];
+      const label = TYPE_LABELS[letra] || grupo.tipo;
+      const row = el("div", { class: "type-row" }, [
+        el("p", { class: "type-label" }, [label]),
+      ]);
+      const chips = el("div", { class: "chip-row", role: "radiogroup", "aria-label": `${subject.nombre}: ${label}` });
+      const current = state.blocks[blockIndex].selections[subject.acronimo].tipos[letra];
+      grupo.codigos.forEach((codigo) => {
+        chips.appendChild(makeChip(blockIndex, subject.acronimo, letra, codigo, codigo, null, current));
+      });
+      chips.appendChild(makeChip(blockIndex, subject.acronimo, letra, "NONE", "No curso este tipo", "chip-none", current));
+      row.appendChild(chips);
+      card.appendChild(row);
+    });
+    return card;
+  }
+
+  function renderStep3() {
+    const list = $("subject-list");
+    list.innerHTML = "";
+
+    // Bloque principal (paso 2 normal): mismo aspecto que siempre, sin
+    // cabecera de bloque ni botón de quitar.
+    const principal = state.blocks[0];
+    const sub = [`Curso ${principal.combo.curso}`, `Semestre ${principal.combo.semestre}`];
+    if (principal.combo.itinerario) sub.push(principal.combo.itinerario);
+    $("step3-context").textContent = sub.join(" · ") + ". Marca un grupo por tipo, o “no curso este tipo” si no te corresponde.";
+    principal.combo.asignaturas.forEach((subject) => list.appendChild(renderSubjectCard(0, subject)));
+
+    // Bloques añadidos ("¿quieres añadir alguna otra asignatura?"): cabecera propia
+    // con el curso de origen (el mismo acrónimo puede venir de dos cursos
+    // distintos, p.ej. IP en 1ºA y en 1ºB, así que hace falta dejarlo claro)
+    // y un botón para quitar el bloque entero.
+    for (let i = 1; i < state.blocks.length; i++) {
+      const block = state.blocks[i];
+      const bsub = [`Semestre ${block.combo.semestre}`];
+      if (block.combo.itinerario) bsub.push(block.combo.itinerario);
+      const section = el("div", { class: "extra-block" }, [
+        el("div", { class: "extra-block-head" }, [
+          el("p", { class: "extra-block-title" }, [`Asignaturas de ${block.combo.curso} · ${bsub.join(" · ")}`]),
+          el("button", { class: "btn-link", type: "button", onclick: () => removeBlock(i) }, ["Quitar este bloque"]),
+        ]),
+      ]);
+      block.combo.asignaturas.forEach((subject) => section.appendChild(renderSubjectCard(i, subject)));
+      list.appendChild(section);
+    }
+
+    // Entrada a "añadir otro curso": siempre al final de la lista.
+    list.appendChild(el("div", { class: "add-block-prompt" }, [
+      el("p", null, ["¿Quieres añadir alguna otra asignatura?"]),
+      el("button", { class: "btn-secondary", type: "button", onclick: startAddingBlock }, ["+ Añadir asignaturas de otro curso"]),
+    ]));
+
+    updateStep3Status();
+  }
+
+  function startAddingBlock() {
+    state.addingBlock = true;
+    renderStep2();
+    setStep(2);
+    $("step-heading").textContent = "¿Qué otra asignatura quieres añadir?";
+  }
+
+  function removeBlock(index) {
+    state.blocks.splice(index, 1);
+    state.liveConflicts = [];
+    state.liveSignature = "";
+    renderStep3();
+    updateStep3Status();
+  }
+
+  function makeChip(blockIndex, acronimo, letra, value, text, extraClass, current) {
+    const btn = el("button", {
+      class: "chip" + (extraClass ? " " + extraClass : ""),
+      type: "button",
+      role: "radio",
+      "aria-checked": String(current === value),
+      onclick: () => setChoice(blockIndex, acronimo, letra, value),
+    }, [text]);
+    btn.dataset.block = String(blockIndex);
+    btn.dataset.acr = acronimo;
+    btn.dataset.letra = letra;
+    btn.dataset.value = value;
+    return btn;
+  }
+
+  function setChoice(blockIndex, acronimo, letra, value) {
+    state.blocks[blockIndex].selections[acronimo].tipos[letra] = value;
+    document.querySelectorAll(
+      `.chip[data-block="${blockIndex}"][data-acr="${cssEscape(acronimo)}"][data-letra="${cssEscape(letra)}"]`
+    ).forEach((chip) => {
+      chip.setAttribute("aria-checked", String(chip.dataset.value === value));
+    });
+    updateStep3Status();
+  }
+
+  function cssEscape(s) { return window.CSS && CSS.escape ? CSS.escape(s) : s; }
+
+  function selectionCompleteness() {
+    let total = 0, done = 0, anyChosen = false;
+    state.blocks.forEach((block) => {
+      Object.values(block.selections).forEach((s) => {
+        Object.values(s.tipos).forEach((v) => {
+          total++;
+          if (v !== null) done++;
+          if (v && v !== "NONE") anyChosen = true;
+        });
+      });
+    });
+    return { total, done, complete: total > 0 && done === total, anyChosen };
+  }
+
+  function buildPayload() {
+    const payload = [];
+    state.blocks.forEach((block) => {
+      Object.entries(block.selections).forEach(([acronimo, s]) => {
+        // Bloque fusionado: los grupos elegidos de una misma asignatura
+        // pueden venir de cohortes (cursos reales) distintas — p.ej.
+        // Teoría A1 (de 1ºA) y Problemas B2 (de 1ºB) para la misma
+        // asignatura. Se agrupan por curso real resuelto, no por
+        // asignatura a secas, así que una asignatura fusionada puede
+        // producir más de una entrada de selección, una por curso de
+        // origen — el backend no cambia, cada una sigue siendo un
+        // `SubjectSelection` normal de un único curso.
+        const porCurso = new Map();
+        Object.entries(s.tipos).forEach(([letra, value]) => {
+          if (!value || value === "NONE") return;
+          const curso = resolveGroupCurso(block.combo, acronimo, letra, value, s.curso);
+          if (!porCurso.has(curso)) porCurso.set(curso, []);
+          porCurso.get(curso).push(value);
+        });
+        porCurso.forEach((grupos, curso) => {
+          payload.push({ acronimo, curso, itinerario: s.itinerario || null, grupos });
+        });
+      });
+    });
+    return payload;
+  }
+
+  // Curso "completo": un único curso con sus dos semestres
+  // añadidos como bloques (nunca se combinan cursos distintos
+  // bajo este título) — el resto de combinaciones usa el título genérico.
+  function cursoCompletoDetectado() {
+    const cursos = new Set(state.blocks.map((b) => b.combo.curso));
+    if (cursos.size !== 1) return null;
+    const semestres = new Set(state.blocks.map((b) => b.combo.semestre));
+    if (!semestres.has(1) || !semestres.has(2)) return null;
+    const year = state.blocks[0].combo.academic_year;
+    return year ? `Tu horario del curso ${year} completo` : "Tu horario del curso completo";
+  }
+
+  function updateStep3Status() {
+    const { total, done, anyChosen } = selectionCompleteness();
+    $("status-text").textContent = `${done} de ${total} tipos elegidos`;
+    updateActionbar();
+
+    const payload = buildPayload();
+    const signature = JSON.stringify(payload);
+    if (!anyChosen || payload.length < 1) {
+      state.liveConflicts = [];
+      renderLiveConflictBanner();
+      return;
+    }
+    if (signature === state.liveSignature) return;
+    state.liveSignature = signature;
+    clearTimeout(updateStep3Status._t);
+    updateStep3Status._t = setTimeout(() => runLiveCheck(payload, signature), 550);
+  }
+
+  async function runLiveCheck(payload, signature) {
+    try {
+      const fd = new FormData();
+      fd.append("pdf", state.file);
+      fd.append("selecciones", JSON.stringify(payload));
+      fd.append("titulo", "Horario");
+      const res = await fetch("/api/generar", { method: "POST", body: fd });
+      if (res.ok) markServerContact();
+      if (signature !== state.liveSignature) return; // la selección ya cambió otra vez
+      if (!res.ok) return; // comprobación en segundo plano: si falla, no se molesta al alumno
+      const body = await res.json();
+      state.liveConflicts = body.conflictos || [];
+      renderLiveConflictBanner();
+    } catch (e) { /* comprobación en segundo plano, se ignora un fallo de red puntual */ }
+  }
+
+  function renderLiveConflictBanner() {
+    $("conflict-banner-live").innerHTML = "";
+    if (!state.liveConflicts.length) return;
+    $("conflict-banner-live").appendChild(buildConflictBanner(state.liveConflicts, { closable: false }));
+  }
+
+  function conflictItem(c) {
+    const aCurso = !c.mismo_curso && c.a.curso ? ` (${c.a.curso})` : "";
+    const bCurso = !c.mismo_curso && c.b.curso ? ` (${c.b.curso})` : "";
+    return el("li", null, [`${fechaLarga(c.fecha)}: ${c.a.asignatura} ${c.a.grupo}${aCurso} choca con ${c.b.asignatura} ${c.b.grupo}${bCurso}.`]);
+  }
+
+  // Mismo criterio de fecha local que fechaLarga (nunca Date + toISOString,
+  // ver el bug de huso ya conocido) — un choque es "pasado" cuando termina
+  // la clase más tardía de las dos, no a medianoche de su fecha.
+  function parseFechaLocal(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+  function conflictEndDate(c) {
+    const day = parseFechaLocal(c.fecha);
+    const [ah, am] = c.a.fin.split(":").map(Number);
+    const [bh, bm] = c.b.fin.split(":").map(Number);
+    const aEnd = new Date(day); aEnd.setHours(ah, am, 0, 0);
+    const bEnd = new Date(day); bEnd.setHours(bh, bm, 0, 0);
+    return aEnd > bEnd ? aEnd : bEnd;
+  }
+  function isConflictPast(c, now) { return conflictEndDate(c) <= now; }
+
+  const WARN_ICON = { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", html: '<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>' };
+
+  // `opts.closable` (por defecto true): el paso 3 (en vivo, mientras se
+  // elige) lo pasa a false — ahí el aviso es información para una decisión
+  // que se está tomando, no un recordatorio que se pueda apartar del todo.
+  // El estado "cerrado" vive solo en este closure, nunca en localStorage:
+  // cerrar es "ahora no", no "no me lo vuelvas a decir" — cada generación
+  // nueva (cada llamada a esta función) empieza siempre abierta.
+  function buildConflictBanner(conflicts, opts) {
+    const closable = !opts || opts.closable !== false;
+    const wrap = el("div", { class: "conflict-wrap" }, []);
+    let closed = false;
+
+    function paint() {
+      wrap.innerHTML = "";
+      if (!conflicts.length) return;
+
+      const now = new Date();
+      const pendientes = conflicts.filter((c) => !isConflictPast(c, now));
+      const pasados = conflicts.filter((c) => isConflictPast(c, now));
+
+      if (closable && closed) {
+        // Frase entera en singular y en plural, no un sufijo "(s)" pegado
+        // — un plural mal formado ("1 fecha(s)") lo lee gente sin
+        // conocimiento técnico.
+        const label = pendientes.length > 0
+          ? (pendientes.length === 1 ? `Ver la fecha que choca` : `Ver las ${pendientes.length} fechas que chocan`)
+          : (pasados.length === 1 ? `Ver el choque ya pasado` : `Ver los ${pasados.length} choques ya pasados`);
+        wrap.appendChild(el("div", { class: "conflict-reopen" }, [
+          el("button", { type: "button", onclick: () => { closed = false; paint(); } }, [label]),
+        ]));
+        return;
+      }
+
+      const blocks = [];
+      let headText;
+      const neutral = pendientes.length === 0;
+      if (!neutral) {
+        const mismoCurso = pendientes.filter((c) => c.mismo_curso);
+        const otroCurso = pendientes.filter((c) => !c.mismo_curso);
+        headText = `${pendientes.length} ${pendientes.length === 1 ? "fecha próxima choca" : "fechas próximas chocan"} de horario`;
+        if (mismoCurso.length) {
+          blocks.push(el("p", { class: "lede" }, [`${mismoCurso.length} dentro del mismo curso — se resuelven eligiendo otro grupo.`]));
+          blocks.push(el("ul", null, mismoCurso.map(conflictItem)));
+        }
+        if (otroCurso.length) {
+          blocks.push(el("p", { class: "lede" }, [`${otroCurso.length} entre cursos distintos — al cursar asignaturas de más de un curso a la vez puede que no exista ninguna combinación de grupos sin choques.`]));
+          blocks.push(el("ul", null, otroCurso.map(conflictItem)));
+        }
+      } else {
+        // Todos los choques de esta selección ya pasaron: no se oculta el
+        // aviso entero (un alumno que vuelve más tarde no tendría forma de
+        // saber que eligió una combinación incompatible), pero deja de ser
+        // una alarma sobre algo que vaya a pasar.
+        headText = pasados.length === 1
+          ? `Esta combinación de grupos tuvo 1 choque de horario, ya pasado`
+          : `Esta combinación de grupos tuvo ${pasados.length} choques de horario, todos ya pasados`;
+      }
+
+      const banner = el("div", { class: "conflict-banner" + (neutral ? " neutral" : ""), role: neutral ? "status" : "alert" }, [
+        el("div", { class: "conflict-head" }, [el("svg", WARN_ICON), headText]),
+        ...blocks,
+      ]);
+      if (closable) {
+        banner.appendChild(el("button", {
+          type: "button", class: "conflict-close", "aria-label": "Cerrar aviso",
+          onclick: () => { closed = true; paint(); },
+        }, ["×"]));
+      }
+      wrap.appendChild(banner);
+    }
+
+    paint();
+    return wrap;
+  }
+
+  // ---------- Generar calendario ----------
+
+  async function onGenerateTap() {
+    const { complete, anyChosen } = selectionCompleteness();
+    if (!complete || !anyChosen) return;
+    const btn = document.querySelector("#actionbar-content .btn-primary");
+    if (btn) { btn.disabled = true; btn.textContent = "Generando…"; }
+
+    const payload = buildPayload();
+    const tituloCompleto = cursoCompletoDetectado();
+    try {
+      const fd = new FormData();
+      fd.append("pdf", state.file);
+      fd.append("selecciones", JSON.stringify(payload));
+      fd.append("titulo", tituloCompleto || "Horario");
+      const res = await fetch("/api/generar", { method: "POST", body: fd });
+      if (!res.ok) {
+        showGenerateError(await friendlyGenerateError(res));
+        return;
+      }
+      markServerContact();
+      state.result = await res.json();
+      renderStep4();
+      setStep(4);
+      if (tituloCompleto) $("step-heading").textContent = tituloCompleto;
+    } catch (e) {
+      showGenerateError("No hemos podido conectar con el servidor. Comprueba tu conexión y vuelve a intentarlo.");
+    } finally {
+      updateActionbar();
+    }
+  }
+
+  async function friendlyGenerateError(res) {
+    let code = null, mensaje = null;
+    try {
+      const body = await res.json();
+      if (body && body.detail) { code = body.detail.error; mensaje = body.detail.mensaje; }
+    } catch (e) { /* sin JSON */ }
+    if (code === "seleccion_vacia") return "No has elegido ninguna asignatura. Vuelve a marcar al menos un grupo.";
+    if (code === "procesado_demasiado_lento") return "Generar este calendario está tardando demasiado. Vuelve a intentarlo en un momento.";
+    if (res.status >= 500) return "Algo ha fallado en el servidor al generar tu horario. Vuelve a intentarlo.";
+    return mensaje || "No hemos podido generar tu horario. Vuelve a intentarlo.";
+  }
+
+  function showGenerateError(message) {
+    const help = $("actionbar-help");
+    help.textContent = message;
+    help.style.color = "var(--alert-ink)";
+  }
+
+  function renderStep4() {
+    const r = state.result;
+
+    $("conflict-banner-final").innerHTML = "";
+    if (r.conflictos && r.conflictos.length) {
+      $("conflict-banner-final").appendChild(buildConflictBanner(r.conflictos));
+    }
+
+    const avisos = $("avisos-note");
+    avisos.innerHTML = "";
+    if (r.avisos) {
+      avisos.appendChild(el("p", { class: "avisos-note" }, [
+        "Puede faltar algún detalle de este horario — lo leemos automáticamente del PDF y alguna parte puede no haberse interpretado bien. Compruébalo contra el documento original si algo no cuadra.",
+      ]));
+    }
+
+    const iframe = $("preview-iframe");
+    iframe.srcdoc = r.html;
+    iframe.onload = () => ajustarAlturaPreview(iframe);
+  }
+
+  // El iframe de vista previa (mismo origen: `srcdoc` hereda el origen del
+  // documento padre) se ajusta a la altura real de su contenido, en vez de
+  // tener su propio scroll interno — para que sea la página entera la que
+  // haga scroll. El contenido cambia de altura al navegar Mes/Semana dentro
+  // del propio calendario, así que un ResizeObserver sobre su <body> lo
+  // vuelve a medir cada vez, no solo una vez al cargar.
+  function ajustarAlturaPreview(iframe) {
+    const doc = iframe.contentDocument;
+    if (!doc || !doc.body) return;
+    const medir = () => { iframe.style.height = doc.documentElement.scrollHeight + "px"; };
+    medir();
+    if (window.ResizeObserver) new ResizeObserver(medir).observe(doc.body);
+  }
+
+  function downloadBlob(content, filename, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  function downloadHtml() { downloadBlob(state.result.html, "horario.html", "text/html;charset=utf-8"); }
+  function downloadIcs() { downloadBlob(state.result.ics, "horario.ics", "text/calendar;charset=utf-8"); }
+
+  setStep(1);
+})();
+</script>
+</body>
+</html>

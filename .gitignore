@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# outputs generados, no versionar salvo que se pida explícitamente
+out/
+*.ics
+!data/**/*.ics
+
+# PDFs de la UCA: documentos con derechos de la universidad, no del
+# proyecto — incluirlos en el repositorio sería redistribuirlos. Se
+# descargan aparte (ver README, "De dónde descargar los PDFs", y
+# `scripts/descargar_pdfs.py`), nunca se versionan, ni siquiera dentro de
+# data/.
+*.pdf
+
+.vscode/
+.idea/

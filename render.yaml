@@ -1,0 +1,18 @@
+# Blueprint de Render (https://render.com/docs/blueprint-spec). Plan
+# gratuito, sin disco persistente — el PDF se procesa en memoria (nunca
+# se escribe a disco) y su horario ya parseado se cachea en memoria del
+# propio proceso, no en un volumen — este servicio no necesita ningún
+# volumen.
+# healthCheckPath: Render no manda tráfico real al servicio hasta que este
+# endpoint responde — importante con un arranque en frío medido en
+# ~13-15s a los límites del plan gratuito (0.1 CPU/512 MB).
+services:
+  - type: web
+    name: horario-esi-uca
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/salud
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

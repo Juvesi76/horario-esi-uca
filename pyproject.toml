@@ -1,0 +1,52 @@
+[project]
+name = "horario-uca"
+version = "0.1.0"
+description = "Convierte los horarios en PDF de la Escuela Superior de Ingeniería (UCA) en un calendario HTML con fechas reales y export a .ics"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Version fijada, no >=: `import fitz` avisa que se retirará en una
+    # versión futura, y todo el código ya usa `import pymupdf` — un
+    # despliegue nuevo no debe poder instalar una versión de PyMuPDF
+    # distinta de la que se ha probado de verdad.
+    "pymupdf==1.28.2",
+    "pydantic>=2.6",
+    "icalendar>=5.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "horario-uca[web]",
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+horario = "horario_uca.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["horario_uca*"]
+
+[tool.setuptools.package-data]
+# `web/static/index.html` — sin esto, `pip install .` (no editable, lo que
+# hace un build de Docker) NO incluye el front en el paquete instalado:
+# `FileResponse(_STATIC_DIR / "index.html")` fallaría en producción con
+# FileNotFoundError. En desarrollo pasa desapercibido porque `pip install
+# -e .` apunta directamente al árbol de fuentes. Verificado construyendo un
+# wheel real (`pip install --no-build-isolation --target ... .`) antes y
+# después de este cambio: antes, `horario_uca/web/` en el paquete instalado
+# no tenía ningún fichero de `static/`; después, sí.
+horario_uca = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

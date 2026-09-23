@@ -1,0 +1,19 @@
+# No hace falta nada de esto dentro de la imagen — ni los PDFs de la UCA
+# (el alumno los sube en cada petición, nunca viven en el servidor), ni
+# los tests, ni salidas de prueba generadas en local.
+data/
+out/
+tests/
+*.html
+*.ics
+!horario_uca/web/static/index.html
+.git/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.dockerignore
+Dockerfile
+render.yaml
