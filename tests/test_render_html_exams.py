@@ -98,6 +98,26 @@ def test_extra_acronyms_da_color_a_asignatura_solo_de_examen():
     assert "ZZZ" in colors_con_extra
 
 
+def test_exams_available_se_marcan_included_false_y_no_contaminan_el_calendario(cal_pinf_case):
+    """Exámenes de una convocatoria disponible pero no incluida (ver
+    `pipeline.py::generate_calendar`) deben aparecer en el JSON de EXAMS
+    (para que la pestaña Exámenes los muestre como catálogo) pero
+    marcados `included: false`, y el JS debe filtrarlos de
+    EXAMS_ON_CALENDAR (Mes/Semana/leyenda) — nunca deben verse como si
+    estuvieran de verdad en el calendario."""
+    filtered, entries, legend = cal_pinf_case
+    included = entries[:1]
+    available = entries[1:2]
+    html = build_html(filtered, legend=legend, title="Prueba", exams=included, exams_available=available)
+    assert '"included": true' in html
+    assert '"included": false' in html
+    # La lógica de filtrado debe seguir presente en la plantilla — si se
+    # borra por error, un examen "disponible" volvería a aparecer como si
+    # ya estuviera en el calendario (Mes/Semana), no solo en la pestaña.
+    assert "EXAMS_ON_CALENDAR" in html
+    assert "e.included !== false" in html
+
+
 def test_examen_sin_ninguna_clase_seleccionada_tambien_se_renderiza(cal_pinf_case):
     """Escenario de "añadir examen a mano" (paso pendiente de interfaz,
     pero el render ya debe soportarlo): un ExamEntry cuya asignatura no

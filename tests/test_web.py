@@ -17,6 +17,7 @@
 detrás de HTTP, sin cuentas ni almacenamiento — cada test sube el PDF de
 referencia como lo haría un navegador."""
 import json
+from pathlib import Path
 
 import icalendar
 import pymupdf
@@ -191,6 +192,117 @@ def test_generar_conflicto_de_horario_avisa_pero_no_bloquea(client, pdf_bytes):
     assert "2027-01-08" in fechas
     for c in body["conflictos"]:
         assert {c["a"]["asignatura"], c["b"]["asignatura"]} == {"IG", "CAL"}
+
+
+EXAM_PDF = Path(__file__).parent.parent / "data" / "GII.calendarioExamenes.Feb27.pdf"
+
+
+@pytest.fixture
+def exam_pdf_bytes() -> bytes:
+    if not EXAM_PDF.exists():
+        pytest.skip(f"fixture no presente: {EXAM_PDF.name} (ver README, 'De dónde descargar los PDFs')")
+    return EXAM_PDF.read_bytes()
+
+
+def test_generar_con_pdf_de_examenes_los_incluye_en_html_e_ics(client, pdf_bytes, exam_pdf_bytes):
+    """IG (1ºA, semestre 1) con clases seleccionadas -> su examen de esta
+    convocatoria se añade automáticamente (ver `select/exams.py`,
+    `default_exam_codes`)."""
+    r = client.post(
+        "/api/generar",
+        files=[
+            ("pdf", ("horario.pdf", pdf_bytes, "application/pdf")),
+            ("examenes", ("examenes.pdf", exam_pdf_bytes, "application/pdf")),
+        ],
+        data=_selecciones({"acronimo": "IG", "curso": "1ºA", "grupos": ["C1"]}),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["examenes_incluidos"] > 0
+    assert "Examen:" in body["html"]
+    assert "exam-" in body["ics"]  # prefijo del UID de un VEVENT de examen
+
+
+def test_generar_sin_pdf_de_examenes_no_incluye_ninguno(client, pdf_bytes):
+    r = client.post(
+        "/api/generar",
+        files=_pdf_file(pdf_bytes),
+        data=_selecciones({"acronimo": "IG", "curso": "1ºA", "grupos": ["C1"]}),
+    )
+    assert r.status_code == 200
+    assert r.json()["examenes_incluidos"] == 0
+
+
+EXAM_PDF_JUN = Path(__file__).parent.parent / "data" / "GII.calendarioExamenes.Jun27.pdf"
+EXAM_PDF_SEP = Path(__file__).parent.parent / "data" / "GII.calendarioExamenes.Sep27.pdf"
+
+
+@pytest.fixture
+def exam_pdf_bytes_jun() -> bytes:
+    if not EXAM_PDF_JUN.exists():
+        pytest.skip(f"fixture no presente: {EXAM_PDF_JUN.name}")
+    return EXAM_PDF_JUN.read_bytes()
+
+
+@pytest.fixture
+def exam_pdf_bytes_sep() -> bytes:
+    if not EXAM_PDF_SEP.exists():
+        pytest.skip(f"fixture no presente: {EXAM_PDF_SEP.name}")
+    return EXAM_PDF_SEP.read_bytes()
+
+
+def _tres_convocatorias_files(pdf_bytes, exam_pdf_bytes, exam_pdf_bytes_jun, exam_pdf_bytes_sep):
+    return [
+        ("pdf", ("horario.pdf", pdf_bytes, "application/pdf")),
+        ("examenes", ("feb.pdf", exam_pdf_bytes, "application/pdf")),
+        ("examenes", ("jun.pdf", exam_pdf_bytes_jun, "application/pdf")),
+        ("examenes", ("sep.pdf", exam_pdf_bytes_sep, "application/pdf")),
+    ]
+
+
+def test_tres_convocatorias_a_la_vez_solo_incluye_la_automatica_de_cada_semestre(
+    client, pdf_bytes, exam_pdf_bytes, exam_pdf_bytes_jun, exam_pdf_bytes_sep
+):
+    """CAL (semestre 1) + ALG (semestre 2) con las 3 convocatorias
+    subidas: por defecto solo entran el examen de CAL en febrero y el de
+    ALG en junio (ver CONVOCATORIA_AUTO_SEMESTER) — septiembre nunca se
+    incluye sola, pero las tres convocatorias quedan disponibles."""
+    r = client.post(
+        "/api/generar",
+        files=_tres_convocatorias_files(pdf_bytes, exam_pdf_bytes, exam_pdf_bytes_jun, exam_pdf_bytes_sep),
+        data=_selecciones(
+            {"acronimo": "CAL", "curso": "1ºA", "grupos": ["C1"]},
+            {"acronimo": "ALG", "curso": "1ºA", "grupos": ["A1"]},
+        ),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["examenes_incluidos"] == 2
+    assert set(body["examenes_convocatorias_incluidas"]) == {"FEBRERO DE 2027", "JUNIO DE 2027"}
+    assert body["examenes_convocatorias_disponibles"] == ["SEPTIEMBRE DE 2027"]
+
+
+def test_tres_convocatorias_todas_incluidas_a_peticion_del_alumno(
+    client, pdf_bytes, exam_pdf_bytes, exam_pdf_bytes_jun, exam_pdf_bytes_sep
+):
+    """Con `examenes_todas_convocatorias=true`, CAL y ALG aparecen en las
+    tres convocatorias (6 exámenes en total), no solo en la automática."""
+    r = client.post(
+        "/api/generar",
+        files=_tres_convocatorias_files(pdf_bytes, exam_pdf_bytes, exam_pdf_bytes_jun, exam_pdf_bytes_sep),
+        data={
+            **_selecciones(
+                {"acronimo": "CAL", "curso": "1ºA", "grupos": ["C1"]},
+                {"acronimo": "ALG", "curso": "1ºA", "grupos": ["A1"]},
+            ),
+            "examenes_todas_convocatorias": "true",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["examenes_incluidos"] == 6
+    assert set(body["examenes_convocatorias_incluidas"]) == {"FEBRERO DE 2027", "JUNIO DE 2027", "SEPTIEMBRE DE 2027"}
+    assert body["examenes_convocatorias_disponibles"] == []
 
 
 def test_generar_evento_trasladado_incluye_descripcion(client, pdf_bytes):

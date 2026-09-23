@@ -429,36 +429,50 @@ def _events_to_json(events: list[CalendarEvent], colors: dict[str, str]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _exams_to_json(exams: list[ExamEntry], colors: dict[str, str]) -> str:
+def _exams_to_json(exams: list[ExamEntry], colors: dict[str, str], exams_available: list[ExamEntry] | None = None) -> str:
     """Mismo criterio de color/patrón/texto que `_events_to_json` — un
     examen se identifica visualmente con el mismo color+patrón que las
     clases de su asignatura (`colors` ya incluye su acrónimo, ver
     `extra_acronyms` en `_assign_colors`), para que un alumno reconozca de
     un vistazo a qué asignatura pertenece. **Nunca se manda una hora de
     fin**: el PDF de convocatoria no la trae, y la interfaz no debe
-    inventar un intervalo — solo la hora de inicio."""
+    inventar un intervalo — solo la hora de inicio.
+
+    `exams_available` (opcional) son exámenes de convocatorias RELEVANTES
+    para la selección pero no incluidas en el calendario (regla de
+    inclusión automática no verificada para esa convocatoria, ver
+    `pipeline.py::generate_calendar`) — se mandan con `included: false`
+    para que la pestaña Exámenes los muestre como catálogo (atenuados,
+    nunca ausentes), pero nunca entran en `find_exam_conflicts`/
+    `find_exam_class_conflicts` (no tiene sentido avisar de un choque con
+    algo que todavía no está en el calendario del alumno) ni en el `.ics`
+    (eso lo decide únicamente la lista `exams` que recibe `build_ics`)."""
     text_colors = {acr: _text_color_for(hexcolor) for acr, hexcolor in colors.items()}
     patterns = _assign_patterns(list(colors.keys()))
     pattern_overlays = {acr: _pattern_overlay_for(hexcolor) for acr, hexcolor in colors.items()}
-    payload = []
-    for e in sorted(exams, key=lambda e: (e.date, e.start_time)):
+
+    def _entry(e: ExamEntry, included: bool) -> dict:
         color = colors.get(e.acronym, "#666666")
-        payload.append(
-            {
-                "kind": "exam",
-                "code": e.code,
-                "acronym": e.acronym,
-                "name": e.name,
-                "curso": e.curso,
-                "date": e.date,
-                "start": e.start_time,
-                "room": e.room,
-                "color": color,
-                "textColor": text_colors.get(e.acronym, "#ffffff"),
-                "pattern": patterns.get(e.acronym, "solid"),
-                "patternOverlay": pattern_overlays.get(e.acronym, "rgba(255,255,255,.5)"),
-            }
-        )
+        return {
+            "kind": "exam",
+            "code": e.code,
+            "acronym": e.acronym,
+            "name": e.name,
+            "curso": e.curso,
+            "date": e.date,
+            "start": e.start_time,
+            "room": e.room,
+            "convocatoria": e.convocatoria,
+            "included": included,
+            "color": color,
+            "textColor": text_colors.get(e.acronym, "#ffffff"),
+            "pattern": patterns.get(e.acronym, "solid"),
+            "patternOverlay": pattern_overlays.get(e.acronym, "rgba(255,255,255,.5)"),
+        }
+
+    all_entries = [(e, True) for e in exams] + [(e, False) for e in (exams_available or [])]
+    all_entries.sort(key=lambda pair: (pair[0].date, pair[0].start_time))
+    payload = [_entry(e, included) for e, included in all_entries]
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -792,6 +806,19 @@ _TEMPLATE = r"""<!DOCTYPE html>
      exámenes son pocos y dispersos en el tiempo, una rejilla de mes vacía
      casi siempre no ayudaría. */
   .exam-list { display: flex; flex-direction: column; gap: 8px; }
+  /* Solo aparece cuando hay más de una convocatoria a la vez (varios PDF
+     de convocatoria subidos) — con una sola, la lista plana de siempre
+     basta y no hace falta ninguna cabecera. */
+  .exam-group { margin-top: 16px; }
+  .exam-group:first-child { margin-top: 0; }
+  .exam-group-title {
+    /* Sin text-transform: capitalize — el texto ya llega bien formado
+       desde JS ("Convocatoria de febrero de 2027"); capitalize pondría
+       en mayúscula también las preposiciones ("De"), que en español no
+       llevan mayúscula en mitad de una frase. */
+    font-size: 13.5px; font-weight: 700; color: var(--week-day-heading);
+    margin: 0 0 8px;
+  }
   .exam-row {
     background: var(--card-bg); border-radius: 8px; padding: 10px 14px;
     box-shadow: 0 1px 3px var(--card-shadow); display: flex; flex-direction: column; gap: 4px;
@@ -808,6 +835,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .exam-row .exam-room { font-size: 12.5px; color: var(--muted-text); }
   .exam-row .exam-conflict-note { font-size: 12.5px; color: var(--conflict-text); }
   .exam-row.past { opacity: .6; }
+  /* Examen relevante para la selección pero no incluido en el calendario
+     (regla de convocatoria sin verificar, ver pipeline.py) — atenuado y
+     con borde discontinuo, nunca con el mismo aspecto que uno ya en el
+     calendario (se confundirían sin poder distinguirlos, ver el aviso que
+     motivó esto). */
+  .exam-row.not-included { opacity: .6; border: 1.5px dashed var(--btn-border); box-shadow: none; }
+  .exam-row .exam-availability-note { font-size: 12.5px; color: var(--muted-text); margin-top: 2px; }
+  .exam-add-btn {
+    margin-left: 4px; background: none; border: none; color: var(--btn-bg-active); text-decoration: underline;
+    font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0;
+  }
   .event-chip, .week-event { cursor: pointer; }
   .event-detail {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
@@ -860,6 +898,12 @@ const EXAM_CLASS_CONFLICTS = __EXAM_CLASS_CONFLICTS_JSON__;
 const EXAM_NOMINAL_DURATION_MINUTES = __EXAM_NOMINAL_DURATION__;
 EVENTS.forEach((e, i) => { e._i = i; });
 EXAMS.forEach((e, i) => { e._i = i; });
+// EXAMS trae TODOS los exámenes relevantes para la selección, incluidos o
+// no (ver `_exams_to_json`) — la pestaña Exámenes los muestra todos como
+// catálogo, pero el calendario en sí (Mes/Semana, legend, paginación) solo
+// debe reflejar lo que de verdad está en el .ics: nunca un examen "que se
+// podría añadir" mezclado con los que sí están.
+const EXAMS_ON_CALENDAR = EXAMS.filter(e => e.included !== false);
 
 const DIA_NOMBRE = ["lunes","martes","miércoles","jueves","viernes","sábado","domingo"];
 const MES_NOMBRE = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
@@ -1013,6 +1057,10 @@ function showExamDetail(exam) {
 }
 
 document.getElementById("content").addEventListener("click", (evt) => {
+  if (evt.target.closest('[data-action="add-convocatorias"]')) {
+    addConvocatoriasFromHere();
+    return;
+  }
   const chipEl = evt.target.closest("[data-i]");
   if (chipEl) {
     if (chipEl.dataset.kind === "exam") {
@@ -1241,7 +1289,7 @@ function buildLegend() {
   // tendría ninguna referencia visible.
   const seen = new Map();
   EVENTS.forEach(e => { if (!seen.has(e.acronym)) seen.set(e.acronym, e); });
-  EXAMS.forEach(e => { if (!seen.has(e.acronym)) seen.set(e.acronym, e); });
+  EXAMS_ON_CALENDAR.forEach(e => { if (!seen.has(e.acronym)) seen.set(e.acronym, e); });
   const legend = document.getElementById("legend");
   legend.innerHTML = "";
   [...seen.values()].sort((a,b) => a.acronym.localeCompare(b.acronym)).forEach(e => {
@@ -1272,11 +1320,13 @@ function isoLocal(date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
 }
 
-// Incluye las fechas de EXAMS, no solo EVENTS — un examen puede caer en un
-// mes/semana sin ninguna clase (típico: fuera del periodo lectivo), y sin
-// esto la paginación de Mes/Semana lo saltaría en silencio, invisible
-// hasta que alguien navegara ahí por casualidad.
-let months = [...new Set([...EVENTS, ...EXAMS].map(e => e.date.slice(0,7)))].sort();
+// Incluye las fechas de EXAMS_ON_CALENDAR, no solo EVENTS — un examen puede
+// caer en un mes/semana sin ninguna clase (típico: fuera del periodo
+// lectivo), y sin esto la paginación de Mes/Semana lo saltaría en
+// silencio, invisible hasta que alguien navegara ahí por casualidad. Los
+// exámenes solo "disponibles" (no incluidos) no cuentan aquí — no están
+// en el calendario todavía, no deben forzar una página nueva.
+let months = [...new Set([...EVENTS, ...EXAMS_ON_CALENDAR].map(e => e.date.slice(0,7)))].sort();
 if (months.length === 0) months = [isoLocal(new Date()).slice(0,7)];
 let monthIndex = 0;
 
@@ -1286,7 +1336,7 @@ function mondayOf(date) {
   d.setDate(d.getDate() - wd);
   return d;
 }
-let weeks = [...new Set([...EVENTS, ...EXAMS].map(e => isoLocal(mondayOf(parseDate(e.date)))))].sort();
+let weeks = [...new Set([...EVENTS, ...EXAMS_ON_CALENDAR].map(e => isoLocal(mondayOf(parseDate(e.date)))))].sort();
 if (weeks.length === 0) weeks = [isoLocal(mondayOf(new Date()))];
 let weekIndex = 0;
 
@@ -1397,7 +1447,7 @@ function renderMonth() {
 
   const byDate = {};
   EVENTS.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push({ item: e, chip: renderEventChip, isExam: false }); });
-  EXAMS.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push({ item: e, chip: renderExamChip, isExam: true }); });
+  EXAMS_ON_CALENDAR.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push({ item: e, chip: renderExamChip, isExam: true }); });
 
   let html = '<div class="month-grid">';
   ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].forEach(d => html += `<div class="weekday-label">${d}</div>`);
@@ -1428,7 +1478,7 @@ function renderWeek() {
     const d = new Date(monday); d.setDate(d.getDate()+i);
     const key = isoLocal(d);
     const dayEvents = EVENTS.filter(e => e.date === key);
-    const dayExams = EXAMS.filter(e => e.date === key);
+    const dayExams = EXAMS_ON_CALENDAR.filter(e => e.date === key);
     const dayItems = [...dayEvents.map(e => ({item: e, isExam: false})), ...dayExams.map(e => ({item: e, isExam: true}))]
       .sort((a,b) => toMinutes(a.item.start)-toMinutes(b.item.start));
     if (dayItems.length === 0) continue;
@@ -1484,6 +1534,48 @@ function examRowConflictNote(exam) {
   return sentence ? `<div class="exam-conflict-note">⚠ ${sentence}</div>` : "";
 }
 
+// Este mismo HTML sirve tanto para el .html descargable (standalone) como
+// para la vista previa embebida en el asistente web (`#preview-iframe`,
+// mismo origen). Solo en el segundo caso tiene sentido un botón que añada
+// la convocatoria de verdad — el asistente expone la función en
+// `window.horarioUcaAddExamConvocatorias` justo antes de insertar este
+// HTML en el iframe; en el fichero descargado, sin asistente alrededor,
+// esa función nunca existe y el botón simplemente no se pinta.
+function canAddConvocatoriasFromHere() {
+  try {
+    return window.top !== window.self && typeof window.parent.horarioUcaAddExamConvocatorias === "function";
+  } catch (e) {
+    return false; // acceso a window.parent bloqueado (origen distinto) — no debería pasar aquí, pero nunca por eso romper el render
+  }
+}
+function addConvocatoriasFromHere() {
+  if (canAddConvocatoriasFromHere()) window.parent.horarioUcaAddExamConvocatorias();
+}
+
+function examRowHtml(exam, now) {
+  const examDate = parseDate(exam.date);
+  const [h, m] = exam.start.split(":").map(Number);
+  examDate.setHours(h, m, 0, 0);
+  const past = examDate <= now;
+  const roomText = exam.room ? `Aula ${exam.room}` : "Aula por confirmar";
+  const notIncluded = exam.included === false;
+  const addBtnHtml = notIncluded && canAddConvocatoriasFromHere()
+    ? ' <button type="button" class="exam-add-btn" data-action="add-convocatorias">Añadir esta convocatoria</button>'
+    : "";
+  const bottomNote = notIncluded
+    ? `<div class="exam-availability-note">No añadido a tu calendario todavía.${addBtnHtml}</div>`
+    : examRowConflictNote(exam);
+  return `<div class="exam-row${past ? ' past' : ''}${notIncluded ? ' not-included' : ''}" data-kind="exam" data-i="${exam._i}">
+    <span class="exam-date">${fechaLarga(exam.date)}</span>
+    <span class="exam-info">
+      <span class="exam-swatch" style="background-color:${exam.color};border-color:${exam.textColor}"></span>
+      <strong>Examen: ${exam.name} (${exam.acronym})</strong>
+    </span>
+    <span class="exam-meta">${exam.start} · <span class="exam-room">${roomText}</span></span>
+    ${bottomNote}
+  </div>`;
+}
+
 function renderExams() {
   document.getElementById("period-label").textContent = "";
   if (EXAMS.length === 0) {
@@ -1491,23 +1583,27 @@ function renderExams() {
     return;
   }
   const now = new Date();
-  const rows = EXAMS.slice().sort((a,b) => (a.date + a.start).localeCompare(b.date + b.start)).map(exam => {
-    const examDate = parseDate(exam.date);
-    const [h, m] = exam.start.split(":").map(Number);
-    examDate.setHours(h, m, 0, 0);
-    const past = examDate <= now;
-    const roomText = exam.room ? `Aula ${exam.room}` : "Aula por confirmar";
-    return `<div class="exam-row${past ? ' past' : ''}" data-kind="exam" data-i="${exam._i}">
-      <span class="exam-date">${fechaLarga(exam.date)}</span>
-      <span class="exam-info">
-        <span class="exam-swatch" style="background-color:${exam.color};border-color:${exam.textColor}"></span>
-        <strong>Examen: ${exam.name} (${exam.acronym})</strong>
-      </span>
-      <span class="exam-meta">${exam.start} · <span class="exam-room">${roomText}</span></span>
-      ${examRowConflictNote(exam)}
+  const sorted = EXAMS.slice().sort((a,b) => (a.date + a.start).localeCompare(b.date + b.start));
+
+  // Con una sola convocatoria (el caso normal), lista plana de siempre —
+  // agrupar solo aparece cuando de verdad hace falta distinguir varias
+  // fechas del MISMO examen (una por convocatoria subida), para que no
+  // parezcan duplicados o un error.
+  const convocatorias = [...new Set(sorted.map(e => e.convocatoria || "Sin convocatoria"))];
+  if (convocatorias.length <= 1) {
+    document.getElementById("content").innerHTML = `<div class="exam-list">${sorted.map(e => examRowHtml(e, now)).join("")}</div>`;
+    return;
+  }
+
+  const groups = convocatorias.map(conv => {
+    const items = sorted.filter(e => (e.convocatoria || "Sin convocatoria") === conv);
+    const title = conv === "Sin convocatoria" ? conv : `Convocatoria de ${conv.toLowerCase()}`;
+    return `<div class="exam-group">
+      <h3 class="exam-group-title">${title}</h3>
+      <div class="exam-list">${items.map(e => examRowHtml(e, now)).join("")}</div>
     </div>`;
   });
-  document.getElementById("content").innerHTML = `<div class="exam-list">${rows.join("")}</div>`;
+  document.getElementById("content").innerHTML = groups.join("");
 }
 
 function render() {
@@ -1556,6 +1652,12 @@ document.getElementById("btn-next").addEventListener("click", () => {
   render();
 });
 
+// Sin exámenes en esta selección, la pestaña no se deja ahí vacía y sin
+// explicación — se oculta del todo, no una lista con un único mensaje.
+if (EXAMS.length === 0) {
+  document.getElementById("btn-view-exams").hidden = true;
+}
+
 buildLegend();
 buildConflictBanner();
 buildExamConflictBanner();
@@ -1576,11 +1678,19 @@ def build_html(
     legend: list[SubjectLegendEntry] | dict[str, tuple[int, int, int]] | None = None,
     title: str = "Horario ESI (UCA)",
     exams: list[ExamEntry] | None = None,
+    exams_available: list[ExamEntry] | None = None,
 ) -> str:
+    """`exams_available` (opcional): exámenes de convocatorias relevantes
+    para la selección pero no incluidas en el calendario — ver
+    `_exams_to_json`. Nunca alimenta conflictos ni `.ics` (ver `build_ics`,
+    que solo recibe `exams`), solo la vista de catálogo de la pestaña
+    Exámenes."""
     exams = exams or []
-    colors = _assign_colors(events, legend, extra_acronyms=[e.acronym for e in exams])
+    exams_available = exams_available or []
+    all_acronyms = [e.acronym for e in exams] + [e.acronym for e in exams_available]
+    colors = _assign_colors(events, legend, extra_acronyms=all_acronyms)
     events_json = _events_to_json(events, colors)
-    exams_json = _exams_to_json(exams, colors)
+    exams_json = _exams_to_json(exams, colors, exams_available=exams_available)
     conflicts_json = _conflicts_to_json(find_conflicts(events))
     exam_conflicts_json = _exam_conflicts_to_json(find_exam_conflicts(exams))
     exam_class_conflicts_json = _exam_class_conflicts_to_json(find_exam_class_conflicts(exams, events))

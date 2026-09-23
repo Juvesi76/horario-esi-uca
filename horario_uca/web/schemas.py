@@ -81,3 +81,15 @@ class GenerarRespuesta(BaseModel):
     avisos_detalle: list[str]
     html: str
     ics: str
+    examenes_incluidos: int = 0
+    """Cuántos exámenes de los PDF de convocatoria subidos (si los hay) se
+    han añadido a `html`/`ics` — para que el front pueda confirmarlo sin
+    tener que volver a parsear nada."""
+    examenes_convocatorias_incluidas: list[str] = []
+    """P.ej. ["FEBRERO DE 2027"] — de qué convocatoria(s) vienen los
+    exámenes ya incluidos."""
+    examenes_convocatorias_disponibles: list[str] = []
+    """Convocatorias subidas con exámenes relevantes para la selección
+    pero NO incluidas automáticamente (regla de inclusión sin verificar
+    para esa convocatoria, ver `select/exams.py`) — el front las ofrece
+    para añadir con un solo clic, nunca las deja simplemente ausentes."""

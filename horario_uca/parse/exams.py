@@ -195,6 +195,7 @@ def parse_exam_calendar(raw: RawPage) -> ExamCalendar:
                     start_time=hora_txt,
                     room=None,
                     section=section or "",
+                    convocatoria=convocatoria,
                 )
             )
 

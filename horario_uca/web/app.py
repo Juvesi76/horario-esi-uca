@@ -78,8 +78,14 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.formparsers import MultiPartParser
 
-from horario_uca.model import CalendarEvent, SubjectSelection
-from horario_uca.pipeline import CatalogCombo, build_catalog, generate_calendar, parse_document_from_bytes
+from horario_uca.model import CalendarEvent, ExamCalendar, SubjectSelection
+from horario_uca.pipeline import (
+    CatalogCombo,
+    build_catalog,
+    generate_calendar,
+    parse_document_from_bytes,
+    parse_exam_calendar_from_bytes,
+)
 from horario_uca.web.schemas import (
     ConflictoLadoSalida,
     ConflictoSalida,
@@ -219,6 +225,26 @@ def _parsear_pdf(data: bytes) -> list:
         ) from exc
 
 
+async def _parsear_examenes_subidos(examenes: list[UploadFile] | None) -> list[ExamCalendar]:
+    """Sin caché (a diferencia del horario): el PDF de convocatoria es
+    mucho más ligero de parsear (una sola página, tabla) — no compensa la
+    complejidad de indexarlo por hash para un coste ya bajo."""
+    calendars: list[ExamCalendar] = []
+    for exam_pdf in examenes or []:
+        data = await _leer_pdf_subido(exam_pdf)
+        try:
+            calendars.append(parse_exam_calendar_from_bytes(data))
+        except (pymupdf.FileDataError, RuntimeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "examen_pdf_no_es_pdf",
+                    "mensaje": f"No se ha podido leer «{exam_pdf.filename}» como PDF de calendario de exámenes.",
+                },
+            ) from exc
+    return calendars
+
+
 # Caché del PARSEO por hash SHA-256 del PDF — nunca de la selección del
 # alumno, ver docstring del módulo. Solo en memoria (un dict de proceso, se
 # pierde al reiniciar/dormir el servicio, y eso es lo esperado — no hay
@@ -314,15 +340,24 @@ async def api_generar(
     pdf: UploadFile = File(...),
     selecciones: str = Form(..., description="JSON de SeleccionEntrada[], ver web/schemas.py"),
     titulo: str | None = Form(None),
+    examenes: list[UploadFile] | None = File(
+        default=None, description="PDFs opcionales de convocatoria de exámenes (uno por convocatoria)"
+    ),
+    examenes_todas_convocatorias: bool = Form(
+        default=False,
+        description="El alumno pidió expresamente incluir TODAS las convocatorias subidas, no solo la automática",
+    ),
 ) -> GenerarRespuesta:
     """Paso 3 del flujo: con el mismo PDF y la selección de grupos ya
     elegida en listas, valida, resuelve fechas, detecta conflictos y
     devuelve los eventos, el HTML autocontenido (para la vista previa) y el
     `.ics` — todo en una única respuesta, nada queda guardado en el
-    servidor."""
+    servidor. `examenes` es opcional: 0, 1 o varios PDFs de convocatoria a
+    la vez (febrero/junio/septiembre son documentos distintos)."""
     data = await _leer_pdf_subido(pdf)
     pages = await _obtener_paginas(data)
     _catalogo_o_error(pages)
+    exam_calendars = await _parsear_examenes_subidos(examenes)
 
     try:
         entradas = _SELECCIONES_ADAPTER.validate_json(selecciones)
@@ -357,7 +392,15 @@ async def api_generar(
     # tiempo (ver `PROCESSING_TIMEOUT_SECONDS`).
     try:
         outcome = await asyncio.wait_for(
-            run_in_threadpool(generate_calendar, pages, selections, titulo=titulo or "Horario ESI (UCA)", verbose=False),
+            run_in_threadpool(
+                generate_calendar,
+                pages,
+                selections,
+                titulo=titulo or "Horario ESI (UCA)",
+                verbose=False,
+                exam_calendars=exam_calendars,
+                include_all_exam_convocatorias=examenes_todas_convocatorias,
+            ),
             timeout=PROCESSING_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError as exc:
@@ -436,4 +479,7 @@ async def api_generar(
         avisos_detalle=avisos_detalle,
         html=outcome.html,
         ics=outcome.ics.decode("utf-8"),
+        examenes_incluidos=len(outcome.exams),
+        examenes_convocatorias_incluidas=outcome.exam_convocatorias_incluidas,
+        examenes_convocatorias_disponibles=outcome.exam_convocatorias_disponibles,
     )

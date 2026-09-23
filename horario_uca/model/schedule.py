@@ -189,6 +189,9 @@ class ExamEntry(BaseModel):
     start_time: str  # "HH:MM"
     room: str | None = None  # nunca viene en el PDF — lo rellena el alumno a mano en la interfaz
     section: str  # p.ej. "Asignaturas propias del título"
+    convocatoria: str | None = None  # "FEBRERO DE 2027" — de qué ExamCalendar viene, para agrupar
+    # varias convocatorias de la misma asignatura en el render (una selección
+    # puede incluir más de un PDF de convocatoria a la vez).
 
 
 class ExamCalendar(BaseModel):

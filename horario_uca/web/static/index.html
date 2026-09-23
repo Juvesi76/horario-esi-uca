@@ -124,11 +124,20 @@
   .step-help { color: var(--ink-muted); font-size: 14.5px; margin-top: 6px; line-height: 1.45; }
 
   /* Step 1: upload */
+  .upload-zone { margin-top: 26px; }
+  .upload-zone:first-child { margin-top: 0; }
+  .upload-zone-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .upload-zone-title { font-size: 16px; }
+  .optional-tag {
+    font-size: 12px; font-weight: 600; color: var(--ink-muted); background: var(--grid);
+    padding: 2px 8px; border-radius: 999px;
+  }
   .dropzone {
-    margin-top: 18px; border: 2px dashed var(--grid-strong); border-radius: var(--radius-md);
+    margin-top: 12px; border: 2px dashed var(--grid-strong); border-radius: var(--radius-md);
     padding: 30px 18px; text-align: center; background: var(--paper-2);
     display: flex; flex-direction: column; align-items: center; gap: 12px;
   }
+  .dropzone.dropzone-compact { padding: 18px; }
   .dropzone.dragover { border-color: var(--cobalt); background: var(--cobalt-soft); }
   .dropzone svg { width: 34px; height: 34px; color: var(--cobalt); }
   .btn-primary {
@@ -137,9 +146,29 @@
   }
   .btn-primary:hover { background: var(--cobalt-ink); }
   .btn-primary:disabled { background: var(--grid); color: var(--ink-muted); cursor: not-allowed; }
-  .dropzone .btn-primary { width: auto; padding: 12px 28px; }
+  .dropzone .btn-primary, .dropzone .btn-secondary { width: auto; padding: 12px 28px; }
   .dropzone-hint { font-size: 13px; color: var(--ink-muted); }
   .source-note { margin-top: 16px; font-size: 13.5px; color: var(--ink-muted); line-height: 1.5; }
+
+  /* Fila "ya subido" — tanto el horario (una) como cada PDF de exámenes
+     (varias, con botón de quitar) comparten este mismo aspecto. */
+  .file-row {
+    display: flex; align-items: center; gap: 10px; margin-top: 10px;
+    background: var(--paper-2); border: 1px solid var(--grid); border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  .file-row svg { flex: none; width: 20px; height: 20px; color: var(--cobalt); }
+  .file-row-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row-action {
+    flex: none; background: none; border: none; color: var(--cobalt); font-size: 13.5px; font-weight: 600;
+    cursor: pointer; text-decoration: underline; padding: 8px 2px; min-height: 38px;
+  }
+  .file-row-remove {
+    flex: none; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+    background: none; border: none; color: var(--ink-muted); cursor: pointer; font-size: 18px; border-radius: 50%;
+  }
+  .file-row-remove:hover { background: var(--alert-soft); color: var(--alert-ink); }
+  .file-list { margin-top: 4px; }
   .loading-box {
     margin-top: 18px; padding: 34px 18px; text-align: center; display: flex; flex-direction: column;
     align-items: center; gap: 14px; color: var(--ink-muted);
@@ -289,6 +318,18 @@
     margin-top: 16px; padding: 11px 13px; border-radius: var(--radius-sm); background: var(--paper-2);
     border: 1px solid var(--grid); font-size: 13px; color: var(--ink-muted); line-height: 1.5;
   }
+  .exam-add-box {
+    margin-top: 16px; padding: 14px; border: 1.5px dashed var(--grid-strong); border-radius: var(--radius-md);
+  }
+  .exam-add-box p { font-size: 13.5px; color: var(--ink-muted); line-height: 1.45; }
+  .exam-add-box .btn-secondary { margin-top: 10px; }
+  .exam-added-line {
+    margin-top: 16px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--paper-2);
+    border: 1px solid var(--grid); font-size: 13.5px; color: var(--ink-muted); line-height: 1.5;
+  }
+  .exam-added-line p { margin: 0; }
+  .exam-added-line p + p { margin-top: 6px; }
+  .exam-added-line .btn-link { margin-top: 8px; display: inline-block; }
   /* Sin altura fija ni scroll propio: el iframe se ajusta a la altura real
      de su contenido (ver ajustarAlturaPreview en el script) para que sea la
      página entera la que haga scroll, no el recuadro por dentro — un scroll
@@ -338,27 +379,53 @@
 
   <main id="main">
     <section class="step" id="step-1">
-      <p class="step-help">Súbelo tal cual lo descargas. Lo enviamos a nuestro servidor para leerlo. Tu selección de asignaturas no se guarda. El horario, que es un documento público de la ESI, se guarda temporalmente en memoria para que cargue más rápido a tus compañeros.</p>
+      <div class="upload-zone" id="zone-horario">
+        <div class="upload-zone-head"><h2 class="upload-zone-title">Horario de clases</h2></div>
+        <p class="step-help">Súbelo tal cual lo descargas. Lo enviamos a nuestro servidor para leerlo. Tu selección de asignaturas no se guarda. El horario, que es un documento público de la ESI, se guarda temporalmente en memoria para que cargue más rápido a tus compañeros.</p>
 
-      <div class="dropzone" id="dropzone">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-        <label class="btn-primary" for="file-input" id="pick-label">Elegir PDF</label>
-        <input type="file" id="file-input" accept="application/pdf" class="sr-only">
-        <p class="dropzone-hint">o arrástralo aquí</p>
+        <div class="dropzone" id="dropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <label class="btn-primary" for="file-input" id="pick-label">Elegir PDF</label>
+          <input type="file" id="file-input" accept="application/pdf" class="sr-only">
+          <p class="dropzone-hint">o arrástralo aquí</p>
+        </div>
+
+        <p class="source-note" id="horario-source-note">
+          ¿No lo tienes a mano? Se descarga desde la web de horarios de tu Escuela — el PDF con tu curso y grupos, tal cual lo publica la ESI.
+        </p>
+
+        <div class="loading-box" id="loading-box" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p id="loading-text">Leyendo el horario…</p>
+        </div>
+
+        <div class="error-box" id="upload-error" hidden role="alert">
+          <p id="upload-error-text"></p>
+          <button type="button" class="btn-secondary" id="upload-retry">Elegir otro PDF</button>
+        </div>
+
+        <div class="file-row" id="horario-done" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+          <span class="file-row-name" id="horario-filename"></span>
+          <button type="button" class="file-row-action" id="horario-change">Cambiar</button>
+        </div>
       </div>
 
-      <p class="source-note">
-        ¿No lo tienes a mano? Se descarga desde la web de horarios de tu Escuela — el PDF con tu curso y grupos, tal cual lo publica la ESI.
-      </p>
+      <div class="upload-zone" id="zone-examenes">
+        <div class="upload-zone-head">
+          <h2 class="upload-zone-title">Calendario de exámenes</h2>
+          <span class="optional-tag">opcional</span>
+        </div>
+        <p class="step-help">Puedes añadirlo ahora o después, desde tu calendario ya generado. Sube uno o varios PDF si tienes más de una convocatoria (febrero, junio, septiembre…).</p>
 
-      <div class="loading-box" id="loading-box" hidden>
-        <div class="spinner" aria-hidden="true"></div>
-        <p id="loading-text">Leyendo el horario…</p>
-      </div>
+        <div class="dropzone dropzone-compact" id="exam-dropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <label class="btn-secondary" for="exam-file-input">Elegir PDF(s)</label>
+          <input type="file" id="exam-file-input" accept="application/pdf" multiple class="sr-only">
+          <p class="dropzone-hint">o arrástralos aquí</p>
+        </div>
 
-      <div class="error-box" id="upload-error" hidden role="alert">
-        <p id="upload-error-text"></p>
-        <button type="button" class="btn-secondary" id="upload-retry">Elegir otro PDF</button>
+        <div class="file-list" id="exam-file-list"></div>
       </div>
     </section>
 
@@ -380,6 +447,7 @@
       <p class="step-help">Este es tu horario con fechas reales, ya listo para guardar o llevar en el móvil.</p>
       <div id="conflict-banner-final"></div>
       <div id="avisos-note"></div>
+      <div id="exam-add-section"></div>
       <div class="preview-frame"><iframe id="preview-iframe" title="Vista previa de tu calendario"></iframe></div>
     </section>
   </main>
@@ -423,6 +491,20 @@
     liveConflicts: [],
     liveSignature: "",
     result: null,
+    // PDFs de convocatoria de exámenes (0, 1 o varios) — nunca se suben a
+    // un endpoint propio, solo se guardan aquí como File y se adjuntan a
+    // cada /api/generar (paso 3 en vivo, generación final, o "añadir
+    // después" desde el paso 4) junto con el horario y la selección, que
+    // ya viven en `state` — así añadirlos más tarde no repite ninguno de
+    // los dos.
+    examFiles: [],
+    // false: solo se incluye la convocatoria automática por semestre (ver
+    // CONVOCATORIA_AUTO_SEMESTER en el backend). true: el alumno pidió
+    // expresamente ver TODAS las convocatorias subidas para sus
+    // asignaturas — una vez pedido, se queda así para el resto de la
+    // sesión (no hay "quitarlas" simétrico, igual que no hay "olvidar
+    // selección").
+    examTodasConvocatorias: false,
   };
 
   // Cuánto hace del último contacto real con el servidor — señal para
@@ -508,7 +590,13 @@
     content.innerHTML = "";
     help.textContent = "";
 
-    if (state.step === 3) {
+    if (state.step === 1) {
+      bar.hidden = false;
+      const btn = el("button", { class: "btn-primary", type: "button", onclick: onContinueStep1 }, ["Continuar"]);
+      btn.disabled = !state.catalog;
+      content.appendChild(btn);
+      if (!state.catalog) help.textContent = "Sube el horario para continuar. El calendario de exámenes es opcional.";
+    } else if (state.step === 3) {
       bar.hidden = false;
       const { complete, anyChosen } = selectionCompleteness();
       const btn = el("button", { class: "btn-primary", type: "button", onclick: onGenerateTap }, ["Ver mi calendario"]);
@@ -557,10 +645,15 @@
     state.liveConflicts = [];
     state.liveSignature = "";
     state.result = null;
+    state.examFiles = [];
+    state.examTodasConvocatorias = false;
     $("file-input").value = "";
     $("upload-error").hidden = true;
     $("loading-box").hidden = true;
     $("dropzone").hidden = false;
+    $("horario-done").hidden = true;
+    $("exam-file-input").value = "";
+    renderExamFileList();
     setStep(1);
   }
 
@@ -591,10 +684,28 @@
 
   function handleFile(file) {
     state.file = file;
+    state.catalog = null;
     $("upload-error").hidden = true;
+    $("horario-done").hidden = true;
     $("dropzone").hidden = true;
     $("loading-box").hidden = false;
+    updateActionbar();
     uploadCatalog();
+  }
+
+  $("horario-change").addEventListener("click", () => {
+    state.file = null;
+    state.catalog = null;
+    $("horario-done").hidden = true;
+    $("dropzone").hidden = false;
+    fileInput.value = "";
+    updateActionbar();
+  });
+
+  function onContinueStep1() {
+    if (!state.catalog) return;
+    renderStep2();
+    setStep(2);
   }
 
   const MSG_LEYENDO = "Leyendo el horario…";
@@ -630,8 +741,10 @@
       state.catalog = await res.json();
       $("loading-box").hidden = true;
       $("loading-text").textContent = MSG_LEYENDO;
-      renderStep2();
-      setStep(2);
+      $("horario-filename").textContent = state.file.name;
+      $("horario-done").hidden = false;
+      updateActionbar();
+      announce("Horario leído correctamente. Puedes continuar o añadir tu calendario de exámenes.");
     } catch (err) {
       clearTimeout(slowTimer);
       $("loading-text").textContent = MSG_LEYENDO;
@@ -659,6 +772,62 @@
     $("loading-box").hidden = true;
     $("upload-error-text").textContent = message;
     $("upload-error").hidden = false;
+  }
+
+  // ---------- Calendario de exámenes: PDF(s) opcionales ----------
+  // Nunca se suben a un endpoint propio ni se validan aquí — solo se
+  // guardan como File en state.examFiles y se adjuntan a la próxima
+  // llamada a /api/generar (paso 3 en vivo, generación final, o "añadir
+  // después" desde el paso 4). El backend es quien los parsea y decide
+  // qué exámenes incluir por defecto (`default_exam_codes`).
+
+  const examDropzone = $("exam-dropzone");
+  const examFileInput = $("exam-file-input");
+
+  function addExamFiles(fileList) {
+    // Filtro barato del lado del cliente: el input ya restringe con
+    // `accept="application/pdf"`, pero un archivo soltado por drag&drop
+    // puede saltárselo — se descarta en silencio lo que no sea un PDF,
+    // sin bloquear los demás ficheros válidos de la misma tanda.
+    Array.from(fileList || []).forEach((f) => {
+      if (f.type === "application/pdf" || /\.pdf$/i.test(f.name)) state.examFiles.push(f);
+    });
+    renderExamFileList();
+  }
+
+  function removeExamFile(index) {
+    state.examFiles.splice(index, 1);
+    renderExamFileList();
+  }
+
+  function renderExamFileList() {
+    const list = $("exam-file-list");
+    if (!list) return;
+    list.innerHTML = "";
+    state.examFiles.forEach((f, i) => {
+      list.appendChild(el("div", { class: "file-row" }, [
+        el("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", html: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>' }),
+        el("span", { class: "file-row-name" }, [f.name]),
+        el("button", { type: "button", class: "file-row-remove", "aria-label": `Quitar ${f.name}`, onclick: () => removeExamFile(i) }, ["×"]),
+      ]));
+    });
+  }
+
+  examFileInput.addEventListener("change", () => {
+    addExamFiles(examFileInput.files);
+    examFileInput.value = "";
+  });
+  ["dragover", "dragenter"].forEach((evt) =>
+    examDropzone.addEventListener(evt, (e) => { e.preventDefault(); examDropzone.classList.add("dragover"); })
+  );
+  ["dragleave", "drop"].forEach((evt) =>
+    examDropzone.addEventListener(evt, (e) => { e.preventDefault(); examDropzone.classList.remove("dragover"); })
+  );
+  examDropzone.addEventListener("drop", (e) => addExamFiles(e.dataTransfer.files));
+
+  function appendExamFiles(fd) {
+    state.examFiles.forEach((f) => fd.append("examenes", f));
+    fd.append("examenes_todas_convocatorias", state.examTodasConvocatorias ? "true" : "false");
   }
 
   // ---------- Paso 2: elegir curso ----------
@@ -1051,6 +1220,7 @@
       fd.append("pdf", state.file);
       fd.append("selecciones", JSON.stringify(payload));
       fd.append("titulo", "Horario");
+      appendExamFiles(fd);
       const res = await fetch("/api/generar", { method: "POST", body: fd });
       if (res.ok) markServerContact();
       if (signature !== state.liveSignature) return; // la selección ya cambió otra vez
@@ -1181,6 +1351,7 @@
       fd.append("pdf", state.file);
       fd.append("selecciones", JSON.stringify(payload));
       fd.append("titulo", tituloCompleto || "Horario");
+      appendExamFiles(fd);
       const res = await fetch("/api/generar", { method: "POST", body: fd });
       if (!res.ok) {
         showGenerateError(await friendlyGenerateError(res));
@@ -1232,9 +1403,121 @@
       ]));
     }
 
+    renderExamAddSection();
+
     const iframe = $("preview-iframe");
     iframe.srcdoc = r.html;
     iframe.onload = () => ajustarAlturaPreview(iframe);
+  }
+
+  // "Añadir después": para quien no subió el PDF de exámenes en el paso 1
+  // (o quiere sumar otra convocatoria) sin tener que volver a subir el
+  // horario ni repetir la selección de grupos — los dos ya viven en
+  // `state` (state.file, state.blocks) desde que se generó el resultado.
+  // "FEBRERO DE 2027" -> "febrero" — la primera palabra en minúscula basta
+  // para el mensaje corto del paso 4; el texto completo con el año ya se
+  // ve en la propia cabecera de grupo dentro de la pestaña Exámenes.
+  function convocatoriaMes(texto) {
+    const primera = (texto || "").trim().split(/\s+/)[0] || "";
+    return primera.toLowerCase();
+  }
+
+  function renderExamAddSection() {
+    const wrap = $("exam-add-section");
+    wrap.innerHTML = "";
+    const r = state.result;
+
+    if (state.examFiles.length === 0) {
+      wrap.appendChild(el("div", { class: "exam-add-box" }, [
+        el("p", null, ["¿Tienes ya el PDF de la convocatoria de exámenes? Añádelo para verlo también en tu calendario."]),
+        el("button", { class: "btn-secondary", type: "button", onclick: onAddExamsFromResult }, ["Añadir PDF de exámenes"]),
+      ]));
+      return;
+    }
+
+    const n = r.examenes_incluidos || 0;
+    const incluidas = r.examenes_convocatorias_incluidas || [];
+    const disponibles = r.examenes_convocatorias_disponibles || [];
+
+    const meses = incluidas.map(convocatoriaMes);
+    const parenIncluidas = meses.length
+      ? ` (convocatoria${meses.length === 1 ? "" : "s"} de ${meses.join(", ")})`
+      : "";
+    const lineaIncluidos = (n === 1 ? "1 examen añadido" : `${n} exámenes añadidos`) + parenIncluidas + ".";
+
+    const box = el("div", { class: "exam-added-line" }, [el("p", null, [lineaIncluidos])]);
+
+    // Convocatorias subidas con exámenes de la selección pero sin regla
+    // automática verificada (ver CONVOCATORIA_AUTO_SEMESTER) — no se
+    // quedan simplemente ausentes: un solo enlace las añade todas de
+    // golpe, agrupadas por convocatoria en la propia pestaña Exámenes.
+    if (disponibles.length > 0) {
+      const mesesDisp = disponibles.map(convocatoriaMes).join(", ");
+      const fraseDisp = disponibles.length === 1
+        ? `Hay 1 convocatoria más disponible para tus asignaturas (${mesesDisp}) — `
+        : `Hay ${disponibles.length} convocatorias más disponibles para tus asignaturas (${mesesDisp}) — `;
+      const link = el("button", { class: "btn-link", type: "button", onclick: onIncludeAllConvocatorias }, ["añadirlas"]);
+      box.appendChild(el("p", null, [fraseDisp, link, "."]));
+    }
+
+    box.appendChild(el("button", { class: "btn-link", type: "button", onclick: onAddExamsFromResult }, ["Añadir otro PDF"]));
+    wrap.appendChild(box);
+  }
+
+  function onIncludeAllConvocatorias() {
+    state.examTodasConvocatorias = true;
+    regenerateWithExams();
+  }
+  // Puente para el botón "Añadir esta convocatoria" dentro de la propia
+  // pestaña Exámenes del calendario embebido (`#preview-iframe`, mismo
+  // origen: `srcdoc` hereda el origen del documento padre) — el HTML
+  // descargable comparte el mismo código de render pero, sin este
+  // asistente alrededor, `window.parent` nunca tiene esta función y el
+  // botón no se pinta (ver `canAddConvocatoriasFromHere` en render/html.py).
+  window.horarioUcaAddExamConvocatorias = onIncludeAllConvocatorias;
+
+  function onAddExamsFromResult() {
+    // Input efímero: no hace falta un <input> propio y persistente del
+    // paso 4 duplicando el del paso 1, pero sí se inserta en el DOM (con la
+    // misma clase sr-only que el resto de inputs de fichero de esta
+    // página) antes de disparar el selector — un input nunca insertado
+    // funciona en la mayoría de navegadores, pero no en todos.
+    const input = el("input", { type: "file", accept: "application/pdf", multiple: "", class: "sr-only" });
+    input.addEventListener("change", () => {
+      addExamFiles(input.files);
+      regenerateWithExams();
+      input.remove();
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  async function regenerateWithExams() {
+    const wrap = $("exam-add-section");
+    wrap.innerHTML = "";
+    wrap.appendChild(el("p", { class: "step-help" }, ["Añadiendo tu calendario de exámenes…"]));
+
+    const payload = buildPayload();
+    const tituloCompleto = cursoCompletoDetectado();
+    try {
+      const fd = new FormData();
+      fd.append("pdf", state.file);
+      fd.append("selecciones", JSON.stringify(payload));
+      fd.append("titulo", tituloCompleto || "Horario");
+      appendExamFiles(fd);
+      const res = await fetch("/api/generar", { method: "POST", body: fd });
+      if (!res.ok) {
+        wrap.innerHTML = "";
+        wrap.appendChild(el("p", { class: "avisos-note" }, [await friendlyGenerateError(res)]));
+        return;
+      }
+      markServerContact();
+      state.result = await res.json();
+      renderStep4();
+    } catch (e) {
+      wrap.innerHTML = "";
+      wrap.appendChild(el("p", { class: "avisos-note" }, ["No hemos podido conectar con el servidor. Vuelve a intentarlo."]));
+    }
   }
 
   // El iframe de vista previa (mismo origen: `srcdoc` hereda el origen del

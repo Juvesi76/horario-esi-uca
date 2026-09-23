@@ -25,19 +25,25 @@ from horario_uca.extract import read_page
 from horario_uca.model import SubjectSelection
 from horario_uca.parse.exams import parse_exam_calendar
 from horario_uca.pipeline import parse_document
-from horario_uca.select.exams import default_exam_codes, find_exam_class_conflicts, find_exam_conflicts
+from horario_uca.select.exams import all_relevant_exam_codes, default_exam_codes, find_exam_class_conflicts, find_exam_conflicts
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 EXAM_PDF = DATA_DIR / "GII.calendarioExamenes.Feb27.pdf"
+EXAM_PDF_JUN = DATA_DIR / "GII.calendarioExamenes.Jun27.pdf"
+EXAM_PDF_SEP = DATA_DIR / "GII.calendarioExamenes.Sep27.pdf"
 GII_PDF = DATA_DIR / "GII_horario2627.pdf"
+
+
+def _exam_calendar(path):
+    if not path.exists():
+        pytest.skip(f"fixture no presente: {path.name}")
+    doc = pymupdf.open(path)
+    return parse_exam_calendar(read_page(doc, 0))
 
 
 @pytest.fixture
 def exam_calendar():
-    if not EXAM_PDF.exists():
-        pytest.skip(f"fixture no presente: {EXAM_PDF.name}")
-    doc = pymupdf.open(EXAM_PDF)
-    return parse_exam_calendar(read_page(doc, 0))
+    return _exam_calendar(EXAM_PDF)
 
 
 @pytest.fixture
@@ -59,7 +65,7 @@ def test_seleccion_md_cal_anade_exactamente_dos_examenes_de_semestre_1_sin_choqu
     assert entries_by_code[list(defaults)[0]].acronym in ("MD", "CAL")
     dates = {entries_by_code[c].acronym: entries_by_code[c].date for c in defaults}
     assert dates == {"CAL": "2027-01-18", "MD": "2027-02-02"}
-    assert not any(i.code == "examen_semestre_2_no_automatico" for i in infos)
+    assert not any(i.code == "examen_semestre_no_automatico" for i in infos)
 
     default_entries = [entries_by_code[c] for c in defaults]
     assert find_exam_conflicts(default_entries) == []
@@ -74,26 +80,28 @@ def test_asignatura_de_semestre_2_no_anade_examen_por_defecto(exam_calendar, gii
 
     assert defaults == set()
     assert any(
-        i.code == "examen_semestre_2_no_automatico" and "ALG" in i.message for i in infos
+        i.code == "examen_semestre_no_automatico" and "ALG" in i.message for i in infos
     )
 
 
 def test_convocatoria_sin_regla_verificada_no_anade_nada(gii_pages):
+    """Septiembre (recuperación final) no tiene regla automática verificada
+    todavía — a diferencia de febrero/junio, ver `CONVOCATORIA_AUTO_SEMESTER`."""
     from horario_uca.model import ExamCalendar, ExamEntry
 
-    junio = ExamCalendar(
-        convocatoria="JUNIO DE 2027",
+    septiembre = ExamCalendar(
+        convocatoria="SEPTIEMBRE DE 2027",
         grado="GRADO EN INGENIERÍA INFORMÁTICA",
         sections=["Asignaturas propias del título"],
         entries=[
             ExamEntry(
                 code="21714009", name="Cálculo", acronym="CAL", curso=1, semestre=1,
-                date="2027-06-15", start_time="16:00", section="Asignaturas propias del título",
+                date="2027-09-06", start_time="16:00", section="Asignaturas propias del título",
             )
         ],
     )
     selections = [SubjectSelection(acronym="CAL", curso="1ºA", groups=["A1"])]
-    defaults, infos = default_exam_codes(selections, gii_pages, junio)
+    defaults, infos = default_exam_codes(selections, gii_pages, septiembre)
     assert defaults == set()
     assert any(i.code == "regla_convocatoria_no_verificada" for i in infos)
 
@@ -125,6 +133,45 @@ def test_examen_no_choca_consigo_mismo_ni_entre_dias_distintos(exam_calendar):
     for c in conflicts:
         assert c.exam_a.code != c.exam_b.code
         assert c.exam_a.date == c.date == c.exam_b.date
+
+
+def test_tres_convocatorias_a_la_vez_con_seleccion_de_semestre_1_y_2(gii_pages):
+    """Caso no probado hasta ahora: una selección con una asignatura de
+    semestre 1 (CAL) y otra de semestre 2 (ALG) contra las TRES
+    convocatorias reales a la vez. Esperado: febrero automático solo para
+    CAL, junio automático solo para ALG, septiembre nunca automático para
+    ninguna — pero `all_relevant_exam_codes` encuentra las dos en las tres,
+    para que el alumno pueda añadirlas a mano si quiere."""
+    feb = _exam_calendar(EXAM_PDF)
+    jun = _exam_calendar(EXAM_PDF_JUN)
+    sep = _exam_calendar(EXAM_PDF_SEP)
+
+    selections = [
+        SubjectSelection(acronym="CAL", curso="1ºA", groups=["A1"]),
+        SubjectSelection(acronym="ALG", curso="1ºA", groups=["A1"]),
+    ]
+
+    feb_defaults, feb_infos = default_exam_codes(selections, gii_pages, feb)
+    jun_defaults, jun_infos = default_exam_codes(selections, gii_pages, jun)
+    sep_defaults, sep_infos = default_exam_codes(selections, gii_pages, sep)
+
+    feb_by_code = {e.code: e for e in feb.entries}
+    jun_by_code = {e.code: e for e in jun.entries}
+
+    assert {feb_by_code[c].acronym for c in feb_defaults} == {"CAL"}
+    assert {jun_by_code[c].acronym for c in jun_defaults} == {"ALG"}
+    assert sep_defaults == set()
+
+    assert any(i.code == "examen_semestre_no_automatico" and "ALG" in i.message for i in feb_infos)
+    assert any(i.code == "examen_semestre_no_automatico" and "CAL" in i.message for i in jun_infos)
+    assert any(i.code == "regla_convocatoria_no_verificada" for i in sep_infos)
+
+    # Las tres convocatorias tienen SIEMPRE las dos asignaturas disponibles
+    # a mano, aunque no se incluyan por defecto — nada se pierde al parsear.
+    for calendar in (feb, jun, sep):
+        by_code = {e.code: e for e in calendar.entries}
+        relevant = all_relevant_exam_codes(selections, gii_pages, calendar)
+        assert {by_code[c].acronym for c in relevant} == {"CAL", "ALG"}
 
 
 def test_ningun_choque_examen_clase_en_esta_convocatoria(exam_calendar, gii_pages):

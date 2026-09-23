@@ -44,21 +44,29 @@ from horario_uca.model import (
 EXAM_NOMINAL_DURATION_MINUTES = 180
 
 # Regla de qué exámenes se añaden por defecto, UNA por convocatoria — no
-# cableada a "febrero". Verificado con datos reales solo para febrero: un
-# examen de semestre 1 de una asignatura en la que el alumno tiene alguna
-# clase seleccionada se añade automáticamente; uno de semestre 2 NUNCA se
-# añade automáticamente (`ALG`, Álgebra, semestre 2, examen el 19/01/2027
-# — antes de su primera clase de curso: esta convocatoria es para quien YA
-# la cursó, no para quien empieza ahora). Una convocatoria sin regla
-# verificada (junio, septiembre, o cualquier otra que no sea "febrero")
-# NO añade nada automáticamente — más seguro no asumir por simetría con
-# febrero que adivinar mal; la regla de cada convocatoria nueva se añade
-# aquí solo después de comprobarse con datos reales de esa convocatoria.
-_FEBRERO_RULE = "semestre_1_con_clases_seleccionadas"
-CONVOCATORIA_RULES: dict[str, str] = {
-    "febrero": _FEBRERO_RULE,
-    # "junio": PENDIENTE DE VERIFICAR — no añadir hasta comprobar con un PDF real.
-    # "septiembre": PENDIENTE DE VERIFICAR — no añadir hasta comprobar con un PDF real.
+# cableada a "febrero". Cada convocatoria automática lo es solo para el
+# semestre que ACABA de terminar sus clases justo antes de esa fecha: es
+# el examen "actual", no una repesca de un semestre ya lejano. Verificado
+# con datos reales de `GII.calendarioExamenes.Feb27.pdf` y
+# `GII.calendarioExamenes.Jun27.pdf`, comparando la misma pareja de
+# asignaturas en las dos convocatorias:
+#   - `CAL` (semestre 1, clases 21/09/2026-17/01/2027): examen de febrero
+#     18/01/2027 (un día después de acabar sus clases — el actual);
+#     examen de junio 22/06/2027 (cinco meses después — repesca).
+#   - `ALG` (semestre 2, clases 08/02/2027-30/05/2027): examen de junio
+#     21/06/2027 (un día después de acabar sus clases — el actual);
+#     examen de febrero 19/01/2027 (ANTES de que sus clases de semestre 2
+#     siquiera empiecen — repesca de un curso anterior).
+# El mismo patrón, simétrico entre las dos convocatorias, confirma que la
+# regla generaliza: no es "febrero es especial", es "la convocatoria
+# inmediatamente posterior al fin de un semestre es automática para ESE
+# semestre". Septiembre (recuperación final, muy posterior a los dos
+# semestres) no tiene regla verificada todavía — no se asume automática
+# para ninguno sin comprobar qué caso de uso representa de verdad.
+CONVOCATORIA_AUTO_SEMESTER: dict[str, int] = {
+    "febrero": 1,
+    "junio": 2,
+    # "septiembre": PENDIENTE DE VERIFICAR — no añadir hasta comprobar con datos reales.
 }
 
 
@@ -102,9 +110,9 @@ def default_exam_codes(
     aplicada, o regla no verificada para esta convocatoria)."""
     infos: list[ParseInfo] = []
     month_key = _convocatoria_month_key(exam_calendar.convocatoria)
-    rule = CONVOCATORIA_RULES.get(month_key) if month_key else None
+    auto_semester = CONVOCATORIA_AUTO_SEMESTER.get(month_key) if month_key else None
 
-    if rule is None:
+    if auto_semester is None:
         infos.append(
             ParseInfo(
                 code="regla_convocatoria_no_verificada",
@@ -119,24 +127,37 @@ def default_exam_codes(
 
     selected_codes = _codes_with_selected_classes(selections, pages)
     defaults = {
-        e.code for e in exam_calendar.entries if e.semestre == 1 and e.code in selected_codes
+        e.code for e in exam_calendar.entries if e.semestre == auto_semester and e.code in selected_codes
     }
-    excluded_sem2 = {
-        e.code for e in exam_calendar.entries if e.semestre == 2 and e.code in selected_codes
+    excluded = {
+        e.code for e in exam_calendar.entries if e.semestre != auto_semester and e.code in selected_codes
     }
-    for code in sorted(excluded_sem2):
+    for code in sorted(excluded):
         entry = next(e for e in exam_calendar.entries if e.code == code)
         infos.append(
             ParseInfo(
-                code="examen_semestre_2_no_automatico",
+                code="examen_semestre_no_automatico",
                 message=(
-                    f"{entry.acronym} ({entry.name}): asignatura de semestre 2 con clases seleccionadas — "
-                    "esta convocatoria es para quien ya cursó la asignatura, no se añade automáticamente"
+                    f"{entry.acronym} ({entry.name}): asignatura de semestre {entry.semestre} con clases "
+                    f"seleccionadas, pero esta convocatoria es automática solo para semestre {auto_semester} — "
+                    "no se añade por defecto"
                 ),
                 page_index=0,
             )
         )
     return defaults, infos
+
+
+def all_relevant_exam_codes(
+    selections: list[SubjectSelection], pages: list[SchedulePage], exam_calendar: ExamCalendar
+) -> set[str]:
+    """Todo código de examen de `exam_calendar` que pertenezca a una
+    asignatura seleccionada, sin filtrar por semestre ni por si la
+    convocatoria tiene regla automática verificada — para cuando el propio
+    alumno pide explícitamente ver/añadir una convocatoria completa (no es
+    una suposición del sistema, es una elección suya)."""
+    selected_codes = _codes_with_selected_classes(selections, pages)
+    return {e.code for e in exam_calendar.entries if e.code in selected_codes}
 
 
 def _to_minutes(hhmm: str) -> int:
