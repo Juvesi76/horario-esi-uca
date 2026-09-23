@@ -102,6 +102,41 @@ _FALLBACK_PALETTE = [
     "#279b7e",  # teal medio
 ]
 
+# Paleta alternativa "vibrante" — modo NO accesible, para quien no necesita
+# la paleta de arriba (activable/desactivable, ver `render/html.py`'s
+# PALETTE_ACCESSIBLE/PALETTE_VIBRANT en la plantilla JS y el interruptor
+# "Colores accesibles"). Deliberadamente por MATIZ, no por luminosidad — el
+# modo vibrante no lleva patrón de fondo por defecto (ver `_palette_table`,
+# `use_patterns=False`), así que aquí el color SÍ vuelve a ser el único
+# canal de identidad, al revés que en `_FALLBACK_PALETTE` — no hace falta
+# que sobreviva a escala de grises ni a daltonismo (para eso está el modo
+# accesible), pero si dos colores de esta paleta quedan demasiado cerca en
+# matiz entre sí, el propio modo vibrante deja de servir para lo que es:
+# distinguir asignaturas a simple vista. Por eso `_assign_colors` con esta
+# paleta usa `avoid_hue_collisions=True` (selección por distancia de matiz
+# mínima a TODO lo ya reclamado, real o sustituto — no solo el ciclo fijo
+# de `_FALLBACK_PALETTE`).
+#
+# 8 matices repartidos por la rueda de color FUERA de la zona reservada al
+# rojo/aviso (`_is_reddish`: ≤35° o ≥340° con saturación≥0.25), saturación
+# alta (0.80) para el efecto "vibrante" pedido, con `_ensure_contrast_margin`
+# ya aplicado (mismo umbral de 5.0 que la paleta accesible — ver
+# `_MIN_CONTRAST_TARGET`, los umbrales de contraste NO cambian entre modos).
+# Verificado con las funciones reales del proyecto, no a ojo: los 8 dan
+# `_is_reddish() == False` y contraste ≥5.0 contra blanco o `_DARK_TEXT_RGB`
+# (máximo de los dos) tras el ajuste — dos de los ocho quedan con margen
+# ajustado (5.03/5.04, matices 205°/300°), el resto entre 8.19 y 10.01.
+_FALLBACK_PALETTE_VIBRANT = [
+    "#dcab18",  # ámbar,      hue≈45°,  contraste 8.19
+    "#7adc18",  # lima,       hue≈90°,  contraste 10.01
+    "#18dc39",  # verde,      hue≈130°, contraste 9.39
+    "#18dcbc",  # turquesa,   hue≈170°, contraste 9.95
+    "#198fe2",  # azul cielo, hue≈205°, contraste 5.03
+    "#1829dc",  # azul,       hue≈235°, contraste 8.79
+    "#7a18dc",  # violeta,    hue≈270°, contraste 7.02
+    "#e931e9",  # magenta,    hue≈300°, contraste 5.04
+]
+
 _WHITE_RGB = (255, 255, 255)
 _DARK_TEXT_RGB = (26, 26, 26)
 
@@ -307,32 +342,73 @@ def _hue_distance(hue_a: float, hue_b: float) -> float:
     return min(d, 360 - d)
 
 
-def _next_fallback_color(used_hex: set[str], start_index: int) -> tuple[str, int]:
-    """Siguiente color de `_FALLBACK_PALETTE` no usado todavía (mismo hex
+def _next_fallback_color(used_hex: set[str], start_index: int, palette: list[str] = _FALLBACK_PALETTE) -> tuple[str, int]:
+    """Siguiente color de `palette` no usado todavía (mismo hex
     exacto), empezando en `start_index` — determinista (mismo documento,
     mismo orden de acrónimos, siempre el mismo resultado), nunca aleatorio.
     No evita matices parecidos a colores ya usados: eso importaba cuando el
-    color era la única señal de identidad, pero ya no lo es — el patrón de
-    fondo (`_assign_patterns`) es quien garantiza que dos asignaturas con
-    colores parecidos (incluso casi idénticos bajo algún tipo de
-    daltonismo) se distingan igual, así que forzar variedad de matiz aquí
-    ya no hace falta y solo agotaba antes la paleta (con solo 3 familias de
-    matiz por diseño — ver comentario de `_FALLBACK_PALETTE` — cualquier
-    sustituto tenía muchas papeletas de acabar cerca de algún color real ya
-    en uso)."""
-    n = len(_FALLBACK_PALETTE)
+    color era la única señal de identidad, pero ya no lo es EN MODO
+    ACCESIBLE — el patrón de fondo (`_assign_patterns`) es quien garantiza
+    que dos asignaturas con colores parecidos (incluso casi idénticos bajo
+    algún tipo de daltonismo) se distingan igual, así que forzar variedad
+    de matiz aquí ya no hace falta y solo agotaba antes la paleta (con solo
+    3 familias de matiz por diseño — ver comentario de `_FALLBACK_PALETTE`
+    — cualquier sustituto tenía muchas papeletas de acabar cerca de algún
+    color real ya en uso). **El modo vibrante NO usa esta función** —
+    ver `_next_fallback_color_by_hue_distance`, porque ahí sí vuelve a
+    faltar el patrón que justifica ignorar el matiz."""
+    n = len(palette)
     for offset in range(n):
         idx = (start_index + offset) % n
-        candidate = _FALLBACK_PALETTE[idx]
+        candidate = palette[idx]
         if candidate not in used_hex:
             return candidate, idx + 1
-    return _FALLBACK_PALETTE[start_index % n], start_index + 1
+    return palette[start_index % n], start_index + 1
+
+
+def _next_fallback_color_by_hue_distance(used_hexes: list[str], used_hex_exact: set[str], palette: list[str]) -> str:
+    """Variante para el modo vibrante (sin patrón de fondo por defecto, ver
+    `_palette_table`): sin ese segundo canal, el color vuelve a ser el
+    único que distingue una asignatura de otra, así que aquí SÍ hace falta
+    evitar matices cercanos a los ya reclamados (reales de leyenda o
+    sustitutos anteriores), no solo el mismo hex exacto como en
+    `_next_fallback_color`. Elige, entre los candidatos de `palette` sin
+    reclamar por hex exacto, el que quede más lejos en matiz del más
+    cercano de `used_hexes` — máx-mín, no óptimo global, pero determinista
+    (empate resuelto por orden de `palette`) y suficiente para el tamaño
+    real de esta paleta (8 colores).
+
+    **Encontrado con datos reales, no hipotético**: sin esta función, el
+    caso de 9 asignaturas ya usado como fixture del "repetidor" (`CAL`,
+    `IG`, `IP`, `MD`, `SDIG` de 1ºA + `AAED`, `AC`, `OGE`, `RC` de 2ºA —
+    dos páginas que reparten el mismo azul/verde/púrpura "de fábrica" del
+    generador de PDFs de la ESI) le tocaba a `RC`
+    (sustituto) un matiz de solo 2° de distancia del azul REAL de `AC`,
+    literalmente indistinguibles en modo vibrante sin patrón. Con esta
+    selección, la distancia mínima de cualquier color al resto sube a
+    ≥12° en ese mismo caso — sigue habiendo un par ajustado (`IP` real,
+    verde de leyenda, y el sustituto de `SDIG`), documentado como límite
+    conocido, no arreglado con más código: con una asignatura REAL fija
+    en un hueco de la rueda de color y solo 8 sustitutos posibles, no
+    siempre hay sitio para separarlos todos con margen amplio."""
+    used_hues = [_hue_degrees(_hex_to_rgb(h)) for h in used_hexes]
+
+    def min_dist(candidate: str) -> float:
+        if not used_hues:
+            return 999.0
+        candidate_hue = _hue_degrees(_hex_to_rgb(candidate))
+        return min(_hue_distance(candidate_hue, uh) for uh in used_hues)
+
+    pool = [c for c in palette if c not in used_hex_exact] or list(palette)
+    return max(pool, key=lambda c: round(min_dist(c), 3))
 
 
 def _assign_colors(
     events: list[CalendarEvent],
     legend: list[SubjectLegendEntry] | dict[str, tuple[int, int, int]] | None = None,
     extra_acronyms: list[str] | None = None,
+    palette: list[str] = _FALLBACK_PALETTE,
+    avoid_hue_collisions: bool = False,
 ) -> dict[str, str]:
     # `extra_acronyms`: asignaturas que necesitan color/patrón aunque no
     # tengan ningún CalendarEvent — un examen añadido a mano sin ningún
@@ -390,23 +466,56 @@ def _assign_colors(
         # muy cálido — ese matiz está reservado para los avisos de choque
         # (ver `_is_reddish`), así que se sustituye por el siguiente color
         # libre de la paleta de respaldo en vez de usar el del PDF tal cual.
-        hexcolor, fallback_index = _next_fallback_color(used_hex, fallback_index)
+        if avoid_hue_collisions:
+            hexcolor = _next_fallback_color_by_hue_distance(list(used_hex), used_hex, palette)
+        else:
+            hexcolor, fallback_index = _next_fallback_color(used_hex, fallback_index, palette)
         colors[acr] = hexcolor
         used_hex.add(hexcolor)
     return colors
 
 
-def _events_to_json(events: list[CalendarEvent], colors: dict[str, str]) -> str:
+def _palette_table(colors: dict[str, str], use_patterns: bool = True) -> dict[str, dict]:
+    """Por acrónimo: color, texto y patrón — la misma combinación que antes
+    calculaban por separado `_events_to_json`/`_exams_to_json`, ahora en un
+    solo sitio para que el modo vibrante/accesible se pueda intercambiar en
+    el CLIENTE (ver `PALETTE_ACCESSIBLE`/`PALETTE_VIBRANT` y
+    `applyPalette` en la plantilla JS de `build_html`) sin volver a pedir
+    nada al servidor — el evento/examen solo necesita su acrónimo para
+    resolver el resto en cualquiera de las dos tablas.
+
+    `use_patterns=False` (modo vibrante): todo acrónimo se manda con
+    `pattern: "solid"` — no hay ninguna regla CSS `.pat-solid::before`
+    (comprobado: solo existen `.pat-diagonal/.dots/.horizontal`), así que
+    "solid" ya significa "sin textura" con el CSS que ya existía, sin
+    añadir ninguna regla nueva."""
     text_colors = {acr: _text_color_for(hexcolor) for acr, hexcolor in colors.items()}
     # `colors` ya está en orden de acrónimo ascendente (así lo construye
     # `_assign_colors`, y los dict de Python conservan orden de inserción)
     # — se reutiliza ese mismo orden para repartir patrón, así el reparto
     # de patrones es independiente de cuál acrónimo tuvo color real y cuál
     # sustituto, pero sigue siendo determinista sobre el mismo documento.
-    patterns = _assign_patterns(list(colors.keys()))
+    patterns = _assign_patterns(list(colors.keys())) if use_patterns else {acr: "solid" for acr in colors}
     pattern_overlays = {acr: _pattern_overlay_for(hexcolor) for acr, hexcolor in colors.items()}
+    return {
+        acr: {
+            "color": colors[acr],
+            "textColor": text_colors[acr],
+            "pattern": patterns[acr],
+            "patternOverlay": pattern_overlays[acr],
+        }
+        for acr in colors
+    }
+
+
+_DEFAULT_STYLE = {"color": "#999999", "textColor": "#ffffff", "pattern": "solid", "patternOverlay": "rgba(255,255,255,.5)"}
+
+
+def _events_to_json(events: list[CalendarEvent], colors: dict[str, str]) -> str:
+    table = _palette_table(colors, use_patterns=True)
     payload = []
     for e in sorted(events, key=lambda e: (e.date, e.start_time)):
+        style = table.get(e.subject_acronym, _DEFAULT_STYLE)
         payload.append(
             {
                 "kind": "class",
@@ -420,10 +529,10 @@ def _events_to_json(events: list[CalendarEvent], colors: dict[str, str]) -> str:
                 "end": e.end_time,
                 "room": e.room,
                 "movedFrom": e.moved_from,
-                "color": colors.get(e.subject_acronym, "#999999"),
-                "textColor": text_colors.get(e.subject_acronym, "#ffffff"),
-                "pattern": patterns.get(e.subject_acronym, "solid"),
-                "patternOverlay": pattern_overlays.get(e.subject_acronym, "rgba(255,255,255,.5)"),
+                "color": style["color"],
+                "textColor": style["textColor"],
+                "pattern": style["pattern"],
+                "patternOverlay": style["patternOverlay"],
             }
         )
     return json.dumps(payload, ensure_ascii=False)
@@ -447,12 +556,10 @@ def _exams_to_json(exams: list[ExamEntry], colors: dict[str, str], exams_availab
     `find_exam_class_conflicts` (no tiene sentido avisar de un choque con
     algo que todavía no está en el calendario del alumno) ni en el `.ics`
     (eso lo decide únicamente la lista `exams` que recibe `build_ics`)."""
-    text_colors = {acr: _text_color_for(hexcolor) for acr, hexcolor in colors.items()}
-    patterns = _assign_patterns(list(colors.keys()))
-    pattern_overlays = {acr: _pattern_overlay_for(hexcolor) for acr, hexcolor in colors.items()}
+    table = _palette_table(colors, use_patterns=True)
 
     def _entry(e: ExamEntry, included: bool) -> dict:
-        color = colors.get(e.acronym, "#666666")
+        style = table.get(e.acronym, {**_DEFAULT_STYLE, "color": "#666666"})
         return {
             "kind": "exam",
             "code": e.code,
@@ -464,10 +571,10 @@ def _exams_to_json(exams: list[ExamEntry], colors: dict[str, str], exams_availab
             "room": e.room,
             "convocatoria": e.convocatoria,
             "included": included,
-            "color": color,
-            "textColor": text_colors.get(e.acronym, "#ffffff"),
-            "pattern": patterns.get(e.acronym, "solid"),
-            "patternOverlay": pattern_overlays.get(e.acronym, "rgba(255,255,255,.5)"),
+            "color": style["color"],
+            "textColor": style["textColor"],
+            "pattern": style["pattern"],
+            "patternOverlay": style["patternOverlay"],
         }
 
     all_entries = [(e, True) for e in exams] + [(e, False) for e in (exams_available or [])]
@@ -604,6 +711,30 @@ _TEMPLATE = r"""<!DOCTYPE html>
     display: flex; flex-direction: column; gap: 10px;
   }
   header h1 { font-size: 17px; margin: 0; font-weight: 600; overflow-wrap: break-word; }
+  /* Interruptor de paleta — visible justo bajo el título, no enterrado en
+     ningún menú ni pantalla aparte (pedido explícito: quien necesita el
+     modo accesible a menudo no sabe que la opción existe, así que el
+     modo accesible es el que se ve por defecto — ver "POR DEFECTO: el
+     modo accesible" — y el interruptor para desactivarlo tiene que ser
+     de los primeros elementos de la página, no algo que haya que buscar). */
+  .palette-toggle { display: flex; flex-direction: column; gap: 3px; }
+  .palette-toggle-row { display: flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
+  .palette-toggle-row input {
+    position: absolute; opacity: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);
+  }
+  .palette-toggle-switch {
+    position: relative; flex: none; width: 36px; height: 21px; border-radius: 999px;
+    background: var(--btn-border); transition: background .15s;
+  }
+  .palette-toggle-switch::before {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; transition: transform .15s;
+  }
+  .palette-toggle-row input:checked + .palette-toggle-switch { background: var(--btn-bg-active); }
+  .palette-toggle-row input:checked + .palette-toggle-switch::before { transform: translateX(15px); }
+  .palette-toggle-row input:focus-visible + .palette-toggle-switch { outline: 2px solid var(--btn-border-active); outline-offset: 2px; }
+  .palette-toggle-label { font-size: 13.5px; font-weight: 600; }
+  .palette-toggle-help { margin: 0 0 0 45px; font-size: 11.5px; color: var(--header-text); opacity: .75; line-height: 1.35; }
   /* Dos filas, no una — "qué vista ves" (Mes/Semana/Exámenes) y "qué
      periodo ves" (←/mes/→) son dos cosas distintas y compiten por el
      mismo ancho si van en la misma fila. Con las DOS pestañas originales
@@ -869,6 +1000,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <header>
   <h1>__TITLE__</h1>
+  <div class="palette-toggle">
+    <label class="palette-toggle-row" for="palette-toggle-input">
+      <input type="checkbox" id="palette-toggle-input" checked>
+      <span class="palette-toggle-switch" aria-hidden="true"></span>
+      <span class="palette-toggle-label">Colores accesibles</span>
+    </label>
+    <p class="palette-toggle-help">Paleta pensada para daltonismo e impresión en blanco y negro. Desactívala para colores más vivos.</p>
+  </div>
   <div class="view-tabs">
     <button id="btn-view-month" class="active">Mes</button>
     <button id="btn-view-week">Semana</button>
@@ -896,6 +1035,12 @@ const CONFLICTS = __CONFLICTS_JSON__;
 const EXAM_CONFLICTS = __EXAM_CONFLICTS_JSON__;
 const EXAM_CLASS_CONFLICTS = __EXAM_CLASS_CONFLICTS_JSON__;
 const EXAM_NOMINAL_DURATION_MINUTES = __EXAM_NOMINAL_DURATION__;
+// Dos tablas completas (acrónimo -> color/texto/patrón), ver
+// `_palette_table` en build_html — el interruptor "Colores accesibles"
+// solo decide cuál de las dos usar, nunca vuelve a pedir nada al
+// servidor (ver `applyPalette` más abajo).
+const PALETTE_ACCESSIBLE = __PALETTE_ACCESSIBLE_JSON__;
+const PALETTE_VIBRANT = __PALETTE_VIBRANT_JSON__;
 EVENTS.forEach((e, i) => { e._i = i; });
 EXAMS.forEach((e, i) => { e._i = i; });
 // EXAMS trae TODOS los exámenes relevantes para la selección, incluidos o
@@ -1658,10 +1803,54 @@ if (EXAMS.length === 0) {
   document.getElementById("btn-view-exams").hidden = true;
 }
 
-buildLegend();
+// ---------- Modo de paleta: accesible (por defecto) / vibrante ----------
+// Se recuerda entre sesiones con localStorage, envuelto en try/catch: si
+// falla (modo privado, cuota agotada, navegador que lo bloquea), el
+// interruptor sigue funcionando en la sesión actual, solo no se recuerda
+// para la próxima — nunca debe romper el render por esto.
+const PALETTE_STORAGE_KEY = "horario-uca:paleta";
+function loadPaletteMode() {
+  try {
+    return localStorage.getItem(PALETTE_STORAGE_KEY) === "vibrant" ? "vibrant" : "accessible";
+  } catch (e) {
+    return "accessible"; // por defecto el modo accesible — ver POR DEFECTO en el pedido original
+  }
+}
+function savePaletteMode(mode) {
+  try { localStorage.setItem(PALETTE_STORAGE_KEY, mode); } catch (e) { /* no se recuerda, pero el interruptor sigue funcionando */ }
+}
+
+// Reasigna color/texto/patrón de CADA evento y examen desde la tabla del
+// modo elegido y vuelve a pintar — nunca una petición nueva al servidor
+// (el `.ics` no se ve afectado en absoluto: build_ics ni sabe que este
+// interruptor existe). EVENTS/EXAMS son los mismos objetos que ya lee
+// showEventDetail/showExamDetail/buildLegend/render, así que mutarlos in
+// situ basta para que TODO lo que ya pinta esos datos se actualice solo,
+// sin duplicar la lista de eventos por modo.
+function applyPalette(mode) {
+  const table = mode === "vibrant" ? PALETTE_VIBRANT : PALETTE_ACCESSIBLE;
+  const paint = (item) => {
+    const p = table[item.acronym];
+    if (!p) return;
+    item.color = p.color; item.textColor = p.textColor; item.pattern = p.pattern; item.patternOverlay = p.patternOverlay;
+  };
+  EVENTS.forEach(paint);
+  EXAMS.forEach(paint);
+  buildLegend();
+  render();
+}
+
+let paletteMode = loadPaletteMode();
+document.getElementById("palette-toggle-input").checked = paletteMode === "accessible";
+document.getElementById("palette-toggle-input").addEventListener("change", (evt) => {
+  paletteMode = evt.target.checked ? "accessible" : "vibrant";
+  savePaletteMode(paletteMode);
+  applyPalette(paletteMode);
+});
+
+applyPalette(paletteMode);
 buildConflictBanner();
 buildExamConflictBanner();
-render();
 </script>
 </body>
 </html>
@@ -1688,12 +1877,27 @@ def build_html(
     exams = exams or []
     exams_available = exams_available or []
     all_acronyms = [e.acronym for e in exams] + [e.acronym for e in exams_available]
-    colors = _assign_colors(events, legend, extra_acronyms=all_acronyms)
-    events_json = _events_to_json(events, colors)
-    exams_json = _exams_to_json(exams, colors, exams_available=exams_available)
+
+    # Dos paletas completas, calculadas las dos siempre — el cambio de modo
+    # en el cliente (interruptor "Colores accesibles") es una relectura de
+    # tabla, nunca una petición nueva al servidor (ver `applyPalette` en la
+    # plantilla JS). El modo accesible es el que se hornea por defecto en
+    # `events`/`exams` (ver "POR DEFECTO: el modo accesible" — quien no
+    # sepa que existe el interruptor debe encontrarse un calendario
+    # utilizable, no al revés).
+    colors_accessible = _assign_colors(events, legend, extra_acronyms=all_acronyms)
+    colors_vibrant = _assign_colors(
+        events, legend, extra_acronyms=all_acronyms,
+        palette=_FALLBACK_PALETTE_VIBRANT, avoid_hue_collisions=True,
+    )
+
+    events_json = _events_to_json(events, colors_accessible)
+    exams_json = _exams_to_json(exams, colors_accessible, exams_available=exams_available)
     conflicts_json = _conflicts_to_json(find_conflicts(events))
     exam_conflicts_json = _exam_conflicts_to_json(find_exam_conflicts(exams))
     exam_class_conflicts_json = _exam_class_conflicts_to_json(find_exam_class_conflicts(exams, events))
+    palette_accessible_json = json.dumps(_palette_table(colors_accessible, use_patterns=True), ensure_ascii=False)
+    palette_vibrant_json = json.dumps(_palette_table(colors_vibrant, use_patterns=False), ensure_ascii=False)
     # Sustitución por marcador único, no `string.Template`: la plantilla usa
     # `${...}` en decenas de template literals de JS, que colisiona con la
     # sintaxis de sustitución `$identificador`/`${identificador}` de
@@ -1704,6 +1908,8 @@ def build_html(
     html = html.replace("__CONFLICTS_JSON__", conflicts_json)
     html = html.replace("__EXAM_CONFLICTS_JSON__", exam_conflicts_json)
     html = html.replace("__EXAM_CLASS_CONFLICTS_JSON__", exam_class_conflicts_json)
+    html = html.replace("__PALETTE_ACCESSIBLE_JSON__", palette_accessible_json)
+    html = html.replace("__PALETTE_VIBRANT_JSON__", palette_vibrant_json)
     html = html.replace("__EXAM_NOMINAL_DURATION__", str(EXAM_NOMINAL_DURATION_MINUTES))
     html = html.replace("__OVERLAP_RING__", _OVERLAP_RING_HEX)
     html = html.replace("__MARKER_RING_LIGHT__", _MARKER_RING_LIGHT_HEX)

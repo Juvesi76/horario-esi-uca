@@ -44,7 +44,10 @@ from horario_uca.render.html import (
     _DARK_TEXT_RGB,
     _ensure_contrast_margin,
     _FALLBACK_PALETTE,
+    _FALLBACK_PALETTE_VIBRANT,
     _hex_to_rgb,
+    _hue_degrees,
+    _hue_distance,
     _is_reddish,
     _MARKER_RING_DARK_HEX,
     _MARKER_RING_LIGHT_HEX,
@@ -182,6 +185,76 @@ def test_paleta_de_respaldo_cumple_el_umbral_de_margen_no_solo_aa():
         assert max(contrast_white, contrast_dark) >= _MIN_CONTRAST_TARGET, (
             f"{hexcolor}: contraste insuficiente (blanco={contrast_white:.2f}, negro={contrast_dark:.2f})"
         )
+
+
+def test_paleta_vibrante_no_tiene_ningun_color_rojizo():
+    """Regla que NO cambia entre modos (ver el pedido original: "el rojo
+    sigue reservado exclusivamente a los avisos, en las dos paletas")."""
+    for hexcolor in _FALLBACK_PALETTE_VIBRANT:
+        assert not _is_reddish(_hex_to_rgb(hexcolor)), f"{hexcolor} es rojo/granate/naranja muy cálido"
+
+
+def test_paleta_vibrante_cumple_el_umbral_de_margen():
+    """Mismo umbral que la paleta accesible (5.0, no el mínimo AA de 4.5) —
+    los dos modos comparten el mismo criterio de contraste de texto sobre
+    el color, ver el pedido original ("LO QUE NO CAMBIA"). Tabla medida
+    (no solo calculada): los 8 colores dan contraste ≥5.03 contra el mejor
+    de blanco/`_DARK_TEXT_RGB` (`#1a1a1a`) — dos quedan con margen más
+    ajustado (5.03/5.04, los matices 205° y 300°), el resto entre 7.02 y
+    10.01."""
+    contrastes = {}
+    for hexcolor in _FALLBACK_PALETTE_VIBRANT:
+        rgb = _hex_to_rgb(hexcolor)
+        contrast_white = _contrast_ratio(rgb, _WHITE_RGB)
+        contrast_dark = _contrast_ratio(rgb, _DARK_TEXT_RGB)
+        contrastes[hexcolor] = max(contrast_white, contrast_dark)
+        assert contrastes[hexcolor] >= _MIN_CONTRAST_TARGET, (
+            f"{hexcolor}: contraste insuficiente (blanco={contrast_white:.2f}, negro={contrast_dark:.2f})"
+        )
+    assert all(c >= 5.0 for c in contrastes.values()), contrastes
+
+
+def test_paleta_vibrante_evita_colisiones_de_matiz_en_caso_real_del_repetidor(sample_pdf_path):
+    """Caso real que encontró el motivo de `avoid_hue_collisions` (ver
+    `_next_fallback_color_by_hue_distance`): sin patrón de fondo por
+    defecto en modo vibrante, el color vuelve a ser el único canal — y sin
+    esta selección por distancia, el mismo caso del "repetidor" (5
+    asignaturas de 1ºA + 4 de 2ºA, dos páginas que reparten el mismo
+    azul/verde/púrpura "de fábrica" del generador de PDFs de la ESI)
+    dejaba a `RC` (sustituto) a solo 2° de matiz del azul REAL de `AC` —
+    prácticamente el mismo color. Con la selección por distancia, la
+    mínima distancia de cualquier color al resto en este caso real sube a
+    ≥12° — sigue habiendo un par ajustado (`IP` real y el sustituto de
+    `SDIG`, ambos verdes), un límite conocido y aceptado, no un fallo: con
+    una asignatura real fija en la rueda de color y solo 8 sustitutos
+    posibles, no siempre hay sitio para separar los 9 con margen amplio."""
+    pages = parse_document(str(sample_pdf_path))
+    events, _ = resolve_document(pages)
+    page_1a = next(p for p in pages if p.curso == "1ºA" and p.semestre == 1)
+    page_2a = next(p for p in pages if p.curso == "2ºA" and p.semestre == 1)
+
+    acronyms_2a = ["AAED", "AC", "OGE", "RC"]  # 4 de las 5 de 2ºA, mismo criterio que el fixture ya usado del "repetidor"
+    sel_events = [
+        e for e in events
+        if (e.curso == "1ºA" and e.semestre == 1)
+        or (e.curso == "2ºA" and e.semestre == 1 and e.subject_acronym in acronyms_2a)
+    ]
+    colors_vibrant = _assign_colors(
+        sel_events, page_1a.legend + page_2a.legend,
+        palette=_FALLBACK_PALETTE_VIBRANT, avoid_hue_collisions=True,
+    )
+    assert set(colors_vibrant) == {"CAL", "IG", "IP", "MD", "SDIG", "AAED", "AC", "OGE", "RC"}
+    assert len(set(colors_vibrant.values())) == 9, "9 asignaturas deben quedar con 9 hex distintos, sin duplicados"
+
+    hues = {acr: _hue_degrees(_hex_to_rgb(hexcolor)) for acr, hexcolor in colors_vibrant.items()}
+    min_dists = {
+        a: min(_hue_distance(hues[a], hues[b]) for b in hues if b != a)
+        for a in hues
+    }
+    assert min_dists["AC"] >= 20 and min_dists["RC"] >= 20, (
+        f"AC/RC deberían quedar bien separados tras evitar la colisión: {min_dists}"
+    )
+    assert min(min_dists.values()) >= 10, f"límite conocido: ningún par debería caer por debajo de ~10° ({min_dists})"
 
 
 def test_ensure_contrast_margin_sube_un_color_flojo_sin_tocar_uno_bueno():
