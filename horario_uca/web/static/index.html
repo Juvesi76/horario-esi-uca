@@ -711,6 +711,7 @@
   const MSG_LEYENDO = "Leyendo el horario…";
   const MSG_SERVIDOR_DESPERTANDO = "El servidor se está despertando: la primera visita tras un rato sin uso puede tardar cerca de un minuto.";
   const MSG_PRIMERA_LECTURA = "Esto puede tardar unos segundos: es la primera vez que se lee este horario concreto.";
+  const MSG_TRANQUILIZA = "Ya casi está — esto solo pasa la primera vez del día, luego va mucho más rápido.";
 
   async function uploadCatalog() {
     // Si ya sabemos que probablemente está dormido, no hace falta esperar
@@ -718,21 +719,27 @@
     // se sepa", no solo "si acaba fallando".
     const probablyAsleep = Date.now() - lastServerContactAt > RENDER_SLEEP_THRESHOLD_MS;
     $("loading-text").textContent = probablyAsleep ? MSG_SERVIDOR_DESPERTANDO : MSG_LEYENDO;
-    // Si NO sabíamos que estaba dormido, la petición puede seguir tardando
-    // por dos motivos distintos que el alumno no tiene por qué distinguir
-    // él mismo: el PDF no estaba en caché (unos segundos, normal) o el
-    // servidor sí estaba dormido pero el reloj de inactividad no lo
-    // detectó (p.ej. otra pestaña lo mantuvo despierto hasta hace poco).
-    // Pasados unos segundos sin respuesta, se asume lo más probable según
-    // la misma señal de inactividad.
-    const slowTimer = probablyAsleep ? null : setTimeout(() => {
-      $("loading-text").textContent = MSG_PRIMERA_LECTURA;
-    }, 4000);
+    // Secuencia de mensajes con el tiempo, no un único aviso fijo — 30
+    // segundos con el mismo texto inmóvil se leen como una app colgada,
+    // no como progreso real. Cubre las dos rutas de entrada (empezó
+    // asumiendo "dormido" o empezó asumiendo "solo sin caché") con la
+    // MISMA escalera a partir de los 10s: si a esas alturas la petición
+    // sigue sin volver, ya no importa cuál de las dos causas era la
+    // buena — a efectos del alumno es indistinguible, y el mensaje debe
+    // dejar de sonar a "un momento" para sonar a "esto va para largo,
+    // pero es normal".
+    const timers = [];
+    if (!probablyAsleep) {
+      timers.push(setTimeout(() => { $("loading-text").textContent = MSG_PRIMERA_LECTURA; }, 4000));
+    }
+    timers.push(setTimeout(() => { $("loading-text").textContent = MSG_SERVIDOR_DESPERTANDO; }, 10000));
+    timers.push(setTimeout(() => { $("loading-text").textContent = MSG_TRANQUILIZA; }, 20000));
+    const clearAllTimers = () => timers.forEach(clearTimeout);
     try {
       const fd = new FormData();
       fd.append("pdf", state.file);
       const res = await fetchConReintento("/api/catalogo", { method: "POST", body: fd });
-      clearTimeout(slowTimer);
+      clearAllTimers();
       markServerContact();
       if (!res.ok) {
         showUploadError(await friendlyUploadError(res));
@@ -746,7 +753,7 @@
       updateActionbar();
       announce("Horario leído correctamente. Puedes continuar o añadir tu calendario de exámenes.");
     } catch (err) {
-      clearTimeout(slowTimer);
+      clearAllTimers();
       $("loading-text").textContent = MSG_LEYENDO;
       showUploadError("No hemos podido conectar con el servidor. Comprueba tu conexión y vuelve a intentarlo.");
     }
