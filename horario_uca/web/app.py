@@ -372,17 +372,24 @@ async def api_generar(
             status_code=400,
             detail={"error": "seleccion_vacia", "mensaje": "No has seleccionado ninguna asignatura."},
         )
-    if any(not entrada.grupos for entrada in entradas):
+    if any(not entrada.grupos and not entrada.solo_examen for entrada in entradas):
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "seleccion_vacia",
-                "mensaje": "Cada asignatura elegida necesita al menos un grupo marcado.",
+                "mensaje": "Cada asignatura elegida necesita al menos un grupo marcado, o el modo 'solo examen'.",
             },
         )
 
     selections = [
-        SubjectSelection(acronym=e.acronimo, curso=e.curso, itinerario=e.itinerario, groups=e.grupos)
+        SubjectSelection(
+            acronym=e.acronimo,
+            curso=e.curso,
+            itinerario=e.itinerario,
+            groups=e.grupos,
+            solo_examen=e.solo_examen,
+            convocatorias=e.convocatorias,
+        )
         for e in entradas
     ]
 
@@ -482,6 +489,7 @@ async def api_generar(
         examenes_incluidos=len(outcome.exams),
         examenes_convocatorias_incluidas=outcome.exam_convocatorias_incluidas,
         examenes_convocatorias_disponibles=outcome.exam_convocatorias_disponibles,
+        examenes_solo_examen_disponibles=outcome.solo_examen_convocatorias,
         generado_el=outcome.generated_at,
         aprobado_el=outcome.approved_at,
     )

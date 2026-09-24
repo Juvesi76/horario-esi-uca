@@ -38,7 +38,8 @@ def build_confirmation_report(
     lines.append("=== Selección ===")
     for s in selections:
         itin = f" ({s.itinerario})" if s.itinerario else ""
-        lines.append(f"  {s.acronym} · {s.curso}{itin}: {', '.join(s.groups)}")
+        grupos = "solo examen (por libre)" if s.solo_examen else ", ".join(s.groups)
+        lines.append(f"  {s.acronym} · {s.curso}{itin}: {grupos}")
 
     validation_warnings: list[ParseWarning] = []
     for s in selections:

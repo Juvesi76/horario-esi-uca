@@ -81,13 +81,14 @@ def _convocatoria_month_key(convocatoria: str | None) -> str | None:
 
 def _codes_with_selected_classes(selections: list[SubjectSelection], pages: list[SchedulePage]) -> set[str]:
     """Códigos de 8 dígitos de toda asignatura con AL MENOS un grupo
-    elegido en `selections` — resuelto contra la leyenda del propio
-    horario (nunca contra el calendario de exámenes), porque el código es
-    la clave estable y las siglas de una `SubjectSelection` son las del
-    horario, no las del PDF de exámenes."""
+    elegido en `selections`, o marcada `solo_examen` (se cursa por libre,
+    sin ningún grupo, pero sí cuenta) — resuelto contra la leyenda del
+    propio horario (nunca contra el calendario de exámenes), porque el
+    código es la clave estable y las siglas de una `SubjectSelection` son
+    las del horario, no las del PDF de exámenes."""
     codes: set[str] = set()
     for selection in selections:
-        if not selection.groups:
+        if not selection.groups and not selection.solo_examen:
             continue
         for page in pages:
             if page.curso != selection.curso:
@@ -107,7 +108,13 @@ def default_exam_codes(
 ) -> tuple[set[str], list[ParseInfo]]:
     """Códigos de examen que se añaden por defecto a la selección del
     alumno. Devuelve también `ParseInfo` explicando por qué (regla
-    aplicada, o regla no verificada para esta convocatoria)."""
+    aplicada, o regla no verificada para esta convocatoria).
+
+    Una asignatura `solo_examen` (por libre) NUNCA entra aquí, aunque la
+    convocatoria tenga regla automática — la regla automática asume que
+    la convocatoria "actual" (justo después del semestre) es la que
+    interesa, y eso no vale para quien la lleva por libre: su
+    convocatoria se elige a mano (`explicit_exam_codes`)."""
     infos: list[ParseInfo] = []
     month_key = _convocatoria_month_key(exam_calendar.convocatoria)
     auto_semester = CONVOCATORIA_AUTO_SEMESTER.get(month_key) if month_key else None
@@ -125,7 +132,8 @@ def default_exam_codes(
         )
         return set(), infos
 
-    selected_codes = _codes_with_selected_classes(selections, pages)
+    non_solo_examen = [s for s in selections if not s.solo_examen]
+    selected_codes = _codes_with_selected_classes(non_solo_examen, pages)
     defaults = {
         e.code for e in exam_calendar.entries if e.semestre == auto_semester and e.code in selected_codes
     }
@@ -158,6 +166,47 @@ def all_relevant_exam_codes(
     una suposición del sistema, es una elección suya)."""
     selected_codes = _codes_with_selected_classes(selections, pages)
     return {e.code for e in exam_calendar.entries if e.code in selected_codes}
+
+
+def explicit_exam_codes(
+    selections: list[SubjectSelection], pages: list[SchedulePage], exam_calendar: ExamCalendar
+) -> set[str]:
+    """Códigos de examen de una asignatura `solo_examen` cuya
+    `convocatorias` incluye la de `exam_calendar` — la elección explícita
+    del alumno, nunca la regla automática por semestre (ver
+    `default_exam_codes`)."""
+    chosen = [
+        s
+        for s in selections
+        if s.solo_examen and exam_calendar.convocatoria and exam_calendar.convocatoria in s.convocatorias
+    ]
+    if not chosen:
+        return set()
+    return _codes_with_selected_classes(chosen, pages)
+
+
+def solo_examen_available_convocatorias(
+    selections: list[SubjectSelection], pages: list[SchedulePage], exam_calendars: list[ExamCalendar]
+) -> dict[str, list[str]]:
+    """Para cada asignatura `solo_examen` de la selección, qué
+    convocatorias subidas tienen de verdad un examen suyo — para que el
+    alumno elija entre ellas en la interfaz en vez de asumir la
+    automática, que no aplica a quien la lleva por libre."""
+    result: dict[str, list[str]] = {}
+    for selection in selections:
+        if not selection.solo_examen:
+            continue
+        codes = _codes_with_selected_classes([selection], pages)
+        if not codes:
+            continue
+        convocatorias = [
+            ec.convocatoria
+            for ec in exam_calendars
+            if ec.convocatoria and any(e.code in codes for e in ec.entries)
+        ]
+        if convocatorias:
+            result[selection.acronym] = convocatorias
+    return result
 
 
 def _to_minutes(hhmm: str) -> int:

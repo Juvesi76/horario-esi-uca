@@ -305,6 +305,65 @@ def test_tres_convocatorias_todas_incluidas_a_peticion_del_alumno(
     assert body["examenes_convocatorias_disponibles"] == []
 
 
+def test_generar_seleccion_solo_examen_sin_grupos_no_es_seleccion_vacia(client, pdf_bytes):
+    """`solo_examen=true` con `grupos` vacío es la forma normal de llevar
+    una asignatura por libre — a diferencia de `test_generar_seleccion_sin_
+    grupos`, esto NO debe rechazarse."""
+    r = client.post(
+        "/api/generar",
+        files=_pdf_file(pdf_bytes),
+        data=_selecciones(
+            {"acronimo": "CAL", "curso": "1ºA", "grupos": ["C1"]},
+            {"acronimo": "ALG", "curso": "1ºA", "grupos": [], "solo_examen": True},
+        ),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert all(e["asignatura"] != "ALG" for e in body["eventos"])
+    assert any(e["asignatura"] == "CAL" for e in body["eventos"])
+
+
+def test_generar_solo_examen_incluye_convocatoria_elegida_a_mano(client, pdf_bytes, exam_pdf_bytes):
+    """ALG por libre, convocatoria de febrero elegida explícitamente —
+    nunca se incluiría por la regla automática (ALG es de semestre 2)."""
+    r = client.post(
+        "/api/generar",
+        files=[
+            ("pdf", ("horario.pdf", pdf_bytes, "application/pdf")),
+            ("examenes", ("examenes.pdf", exam_pdf_bytes, "application/pdf")),
+        ],
+        data=_selecciones(
+            {
+                "acronimo": "ALG", "curso": "1ºA", "grupos": [],
+                "solo_examen": True, "convocatorias": ["FEBRERO DE 2027"],
+            }
+        ),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["examenes_incluidos"] == 1
+    assert "Examen:" in body["html"]
+    assert all(e["asignatura"] != "ALG" for e in body["eventos"])
+
+
+def test_generar_solo_examen_sin_convocatoria_elegida_ofrece_las_disponibles(client, pdf_bytes, exam_pdf_bytes):
+    """Sin elegir todavía ninguna convocatoria: no se añade ningún examen,
+    pero la respuesta dice cuáles hay disponibles para esa asignatura, para
+    que el front pueda ofrecerlas."""
+    r = client.post(
+        "/api/generar",
+        files=[
+            ("pdf", ("horario.pdf", pdf_bytes, "application/pdf")),
+            ("examenes", ("examenes.pdf", exam_pdf_bytes, "application/pdf")),
+        ],
+        data=_selecciones({"acronimo": "ALG", "curso": "1ºA", "grupos": [], "solo_examen": True}),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["examenes_incluidos"] == 0
+    assert body["examenes_solo_examen_disponibles"] == {"ALG": ["FEBRERO DE 2027"]}
+
+
 def test_generar_evento_trasladado_incluye_descripcion(client, pdf_bytes):
     r = client.post(
         "/api/generar",

@@ -25,7 +25,14 @@ from horario_uca.extract import read_page
 from horario_uca.model import SubjectSelection
 from horario_uca.parse.exams import parse_exam_calendar
 from horario_uca.pipeline import parse_document
-from horario_uca.select.exams import all_relevant_exam_codes, default_exam_codes, find_exam_class_conflicts, find_exam_conflicts
+from horario_uca.select.exams import (
+    all_relevant_exam_codes,
+    default_exam_codes,
+    explicit_exam_codes,
+    find_exam_class_conflicts,
+    find_exam_conflicts,
+    solo_examen_available_convocatorias,
+)
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 EXAM_PDF = DATA_DIR / "GII.calendarioExamenes.Feb27.pdf"
@@ -172,6 +179,50 @@ def test_tres_convocatorias_a_la_vez_con_seleccion_de_semestre_1_y_2(gii_pages):
         by_code = {e.code: e for e in calendar.entries}
         relevant = all_relevant_exam_codes(selections, gii_pages, calendar)
         assert {by_code[c].acronym for c in relevant} == {"CAL", "ALG"}
+
+
+def test_solo_examen_no_genera_clases_y_usa_convocatoria_elegida_a_mano(exam_calendar, gii_pages):
+    """Caso real de 'por libre': ALG (semestre 2) llevada solo para el
+    examen, en la convocatoria de FEBRERO — que NUNCA es automática para
+    ALG (ver test_asignatura_de_semestre_2_no_anade_examen_por_defecto),
+    porque quien la lleva por libre no tiene por qué coincidir con la
+    regla pensada para quien sí va a clase."""
+    from horario_uca.pipeline import generate_calendar
+
+    solo_examen = SubjectSelection(
+        acronym="ALG", curso="1ºA", groups=[], solo_examen=True, convocatorias=["FEBRERO DE 2027"],
+    )
+
+    # Sin ninguna elección de curso, el código de ALG sigue siendo
+    # "relevante" para el examen (ver _codes_with_selected_classes), pero
+    # jamás entra por la regla automática de semestre.
+    auto_codes, _ = default_exam_codes([solo_examen], gii_pages, exam_calendar)
+    assert auto_codes == set()
+    codes = explicit_exam_codes([solo_examen], gii_pages, exam_calendar)
+    entries_by_code = {e.code: e for e in exam_calendar.entries}
+    assert {entries_by_code[c].acronym for c in codes} == {"ALG"}
+
+    # Sin convocatoria elegida todavía: sigue apareciendo como disponible
+    # (para que el front pueda ofrecerla), pero no se incluye nada.
+    sin_elegir = SubjectSelection(acronym="ALG", curso="1ºA", groups=[], solo_examen=True)
+    disponibles = solo_examen_available_convocatorias([sin_elegir], gii_pages, [exam_calendar])
+    assert disponibles == {"ALG": ["FEBRERO DE 2027"]}
+    assert explicit_exam_codes([sin_elegir], gii_pages, exam_calendar) == set()
+
+    # Extremo a extremo: ni un solo evento de clase de ALG, pero sí su examen.
+    selections = [
+        SubjectSelection(acronym="CAL", curso="1ºA", groups=["A1", "B3", "C1"]),
+        solo_examen,
+    ]
+    outcome = generate_calendar(gii_pages, selections, exam_calendars=[exam_calendar])
+    assert outcome.ok
+    assert all(e.subject_acronym != "ALG" for e in outcome.events)
+    assert any(e.subject_acronym == "CAL" for e in outcome.events)
+    exam_acronyms = {e.acronym for e in outcome.exams}
+    assert "ALG" in exam_acronyms
+    assert outcome.solo_examen_convocatorias == {"ALG": ["FEBRERO DE 2027"]}
+    assert b"ALG" in outcome.ics
+    assert outcome.ics.count(b"BEGIN:VEVENT") == len(outcome.events) + len(outcome.exams)
 
 
 def test_ningun_choque_examen_clase_en_esta_convocatoria(exam_calendar, gii_pages):

@@ -260,6 +260,15 @@
   .chip.chip-none { font-weight: 500; }
   .chip.chip-none[aria-checked="true"] { background: var(--ink-muted); border-color: var(--ink-muted); }
 
+  .solo-examen-toggle {
+    display: flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; min-height: 44px; padding: 4px 0;
+  }
+  .solo-examen-toggle input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--cobalt); flex: none; }
+  .solo-examen-conv { margin-top: 4px; }
+  .solo-examen-conv .itin-note, .solo-examen-conv .step-help { margin: 0 0 8px; }
+  .solo-examen-conv .type-label { margin-bottom: 6px; }
+
   .extra-block { margin-top: 26px; padding-top: 18px; border-top: 2px dashed var(--grid-strong); }
   .extra-block-head {
     display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap;
@@ -517,6 +526,15 @@
     // sesión (no hay "quitarlas" simétrico, igual que no hay "olvidar
     // selección").
     examTodasConvocatorias: false,
+    // acrónimo -> convocatorias subidas con examen de esa asignatura, para
+    // cada asignatura marcada "solo examen" — viene de la última respuesta
+    // de /api/generar (mismo mecanismo que state.liveConflicts: el paso 3
+    // ya llama a ese endpoint en segundo plano en cada cambio de selección).
+    soloExamenDisponibles: {},
+    // false hasta la primera respuesta de la comprobación en vivo — mientras
+    // tanto el selector de convocatoria muestra "comprobando…" en vez de
+    // "no hay ninguna" (que sería falso: aún no se sabe).
+    soloExamenChecked: false,
   };
 
   // Cuánto hace del último contacto real con el servidor — señal para
@@ -667,6 +685,8 @@
     state.result = null;
     state.examFiles = [];
     state.examTodasConvocatorias = false;
+    state.soloExamenDisponibles = {};
+    state.soloExamenChecked = false;
     $("file-input").value = "";
     $("upload-error").hidden = true;
     $("loading-box").hidden = true;
@@ -936,6 +956,12 @@
       asignaturas,
       merged: true,
       codeOrigin,
+      // Curso real de la cohorte A — para resolver el `curso` de una
+      // asignatura "solo examen" (sin ningún grupo elegido, así que
+      // `codeOrigin` no tiene nada que resolver): la leyenda es idéntica
+      // en las dos cohortes (mismo acrónimo, mismo código de 8 dígitos),
+      // así que da igual cuál de las dos se use para ese propósito.
+      soloExamenCurso: comboA.curso,
     };
   }
 
@@ -1032,7 +1058,10 @@
       // cuenta contra `combo.codeOrigin` (ver buildPayload) — se deja a
       // `null` aquí para no mandar por error el pseudo-curso "1º"/"2º".
       const curso = combo.merged ? null : combo.curso;
-      selections[s.acronimo] = { curso, itinerario: combo.itinerario, nombre: s.nombre, tipos };
+      selections[s.acronimo] = {
+        curso, itinerario: combo.itinerario, nombre: s.nombre, tipos,
+        soloExamen: false, convocatorias: [],
+      };
     });
     return selections;
   }
@@ -1043,6 +1072,14 @@
       if (origin) return origin;
     }
     return fallbackCurso;
+  }
+
+  // Una asignatura "solo examen" no elige ningún grupo, así que no hay
+  // código con el que resolver el curso real vía `codeOrigin` — se usa
+  // directamente `combo.soloExamenCurso` (la cohorte A) cuando el bloque
+  // está fusionado.
+  function resolveSoloExamenCurso(combo, s) {
+    return combo.merged ? combo.soloExamenCurso : (s.curso || combo.curso);
   }
 
   function chooseCombo(combo) {
@@ -1065,12 +1102,30 @@
   // ---------- Paso 3: elegir grupos ----------
 
   function renderSubjectCard(blockIndex, subject) {
+    const s = state.blocks[blockIndex].selections[subject.acronimo];
     const card = el("div", { class: "subject-card" }, [
       el("div", { class: "subject-head" }, [
         el("h3", null, [subject.nombre]),
         el("span", { class: "acr" }, [subject.acronimo]),
       ]),
     ]);
+
+    const toggleId = `solo-examen-${blockIndex}-${subject.acronimo}`;
+    const toggleProps = { type: "checkbox", id: toggleId, onchange: (e) => setSoloExamen(blockIndex, subject.acronimo, e.target.checked) };
+    if (s.soloExamen) toggleProps.checked = "checked";
+    card.appendChild(el("label", { class: "solo-examen-toggle", for: toggleId }, [
+      el("input", toggleProps),
+      "Solo el examen — no voy a clase",
+    ]));
+
+    if (s.soloExamen) {
+      const pickerId = `conv-picker-${blockIndex}-${subject.acronimo}`;
+      const picker = el("div", { class: "solo-examen-conv", id: pickerId });
+      fillConvocatoriaPicker(picker, blockIndex, subject.acronimo);
+      card.appendChild(picker);
+      return card;
+    }
+
     Object.keys(subject.grupos).sort().forEach((letra) => {
       const grupo = subject.grupos[letra];
       const label = TYPE_LABELS[letra] || grupo.tipo;
@@ -1170,10 +1225,100 @@
 
   function cssEscape(s) { return window.CSS && CSS.escape ? CSS.escape(s) : s; }
 
+  // ---------- "Solo el examen" (asignatura por libre) ----------
+
+  function setSoloExamen(blockIndex, acronimo, checked) {
+    const s = state.blocks[blockIndex].selections[acronimo];
+    s.soloExamen = checked;
+    if (!checked) s.convocatorias = [];
+    // El layout de la tarjeta cambia de verdad (chips <-> selector de
+    // convocatoria), así que se reconstruye entera — no es un cambio que
+    // ocurra en cada tecleo, con un re-render completo basta.
+    renderStep3();
+  }
+
+  // Rellena (o vuelve a rellenar) el selector de convocatoria de una
+  // asignatura "solo examen" — separado de `renderSubjectCard` porque se
+  // vuelve a llamar cada vez que llega una respuesta nueva de la
+  // comprobación en vivo (`runLiveCheck`), sin reconstruir la tarjeta
+  // entera (perdería el foco del propio checkbox que se acaba de marcar).
+  function fillConvocatoriaPicker(wrap, blockIndex, acronimo) {
+    wrap.innerHTML = "";
+    const block = state.blocks[blockIndex];
+    const s = block && block.selections[acronimo];
+    if (!s || !s.soloExamen) return;
+
+    if (state.examFiles.length === 0) {
+      wrap.appendChild(el("p", { class: "itin-note" }, [
+        "Sube el PDF de la convocatoria de exámenes (paso 1, o más tarde desde tu calendario ya generado) " +
+        "para que esta asignatura entre en tu calendario — hasta entonces no generará nada.",
+      ]));
+      return;
+    }
+
+    if (!state.soloExamenChecked) {
+      wrap.appendChild(el("p", { class: "step-help" }, ["Comprobando qué convocatorias tienen examen de esta asignatura…"]));
+      return;
+    }
+
+    const disponibles = state.soloExamenDisponibles[acronimo] || [];
+    if (disponibles.length === 0) {
+      wrap.appendChild(el("p", { class: "itin-note" }, [
+        "El PDF de exámenes que has subido no tiene ningún examen de esta asignatura.",
+      ]));
+      return;
+    }
+
+    // Si solo hay una convocatoria disponible, se marca por defecto — pero
+    // solo si el alumno no había elegido nada todavía (no se pisa una
+    // elección real, p.ej. si luego sube un segundo PDF con otra más).
+    if (disponibles.length === 1 && s.convocatorias.length === 0) {
+      s.convocatorias = [disponibles[0]];
+      updateStep3Status();
+    }
+
+    wrap.appendChild(el("p", { class: "type-label" }, ["Convocatoria del examen:"]));
+    const row = el("div", { class: "chip-row", role: "group", "aria-label": "Convocatoria del examen" });
+    disponibles.forEach((conv) => {
+      const checked = s.convocatorias.includes(conv);
+      row.appendChild(el("button", {
+        class: "chip", type: "button", role: "checkbox", "aria-checked": String(checked),
+        onclick: () => toggleConvocatoria(blockIndex, acronimo, conv, wrap),
+      }, [convocatoriaMes(conv)]));
+    });
+    wrap.appendChild(row);
+  }
+
+  function toggleConvocatoria(blockIndex, acronimo, conv, wrap) {
+    const s = state.blocks[blockIndex].selections[acronimo];
+    const i = s.convocatorias.indexOf(conv);
+    if (i >= 0) s.convocatorias.splice(i, 1); else s.convocatorias.push(conv);
+    fillConvocatoriaPicker(wrap, blockIndex, acronimo);
+    updateStep3Status();
+  }
+
+  // Tras cada respuesta de la comprobación en vivo: refresca el selector
+  // de convocatoria de toda asignatura "solo examen" ya pintada (puede
+  // pasar de "comprobando…" a la lista real, o detectar que ha llegado un
+  // PDF de exámenes nuevo).
+  function refreshSoloExamenPickers() {
+    state.blocks.forEach((block, blockIndex) => {
+      Object.entries(block.selections).forEach(([acronimo, s]) => {
+        if (!s.soloExamen) return;
+        const wrap = $(`conv-picker-${blockIndex}-${acronimo}`);
+        if (wrap) fillConvocatoriaPicker(wrap, blockIndex, acronimo);
+      });
+    });
+  }
+
   function selectionCompleteness() {
     let total = 0, done = 0, anyChosen = false;
     state.blocks.forEach((block) => {
       Object.values(block.selections).forEach((s) => {
+        // "Solo examen" no deja ningún tipo pendiente por diseño — no
+        // cuenta en el denominador, para que el contador nunca muestre
+        // pendientes fantasma de una asignatura sin clases.
+        if (s.soloExamen) { anyChosen = true; return; }
         Object.values(s.tipos).forEach((v) => {
           total++;
           if (v !== null) done++;
@@ -1181,13 +1326,24 @@
         });
       });
     });
-    return { total, done, complete: total > 0 && done === total, anyChosen };
+    return { total, done, complete: done === total && anyChosen, anyChosen };
   }
 
   function buildPayload() {
     const payload = [];
     state.blocks.forEach((block) => {
       Object.entries(block.selections).forEach(([acronimo, s]) => {
+        if (s.soloExamen) {
+          payload.push({
+            acronimo,
+            curso: resolveSoloExamenCurso(block.combo, s),
+            itinerario: s.itinerario || null,
+            grupos: [],
+            solo_examen: true,
+            convocatorias: s.convocatorias,
+          });
+          return;
+        }
         // Bloque fusionado: los grupos elegidos de una misma asignatura
         // pueden venir de cohortes (cursos reales) distintas — p.ej.
         // Teoría A1 (de 1ºA) y Problemas B2 (de 1ºB) para la misma
@@ -1255,6 +1411,9 @@
       const body = await res.json();
       state.liveConflicts = body.conflictos || [];
       renderLiveConflictBanner();
+      state.soloExamenDisponibles = body.examenes_solo_examen_disponibles || {};
+      state.soloExamenChecked = true;
+      refreshSoloExamenPickers();
     } catch (e) { /* comprobación en segundo plano, se ignora un fallo de red puntual */ }
   }
 

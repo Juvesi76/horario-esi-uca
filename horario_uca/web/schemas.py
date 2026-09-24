@@ -32,6 +32,11 @@ class SeleccionEntrada(BaseModel):
     curso: str
     itinerario: str | None = None
     grupos: list[str]
+    solo_examen: bool = False
+    """Asignatura llevada por libre: no genera clases (`grupos` puede
+    quedar vacío), pero sí cuenta para el calendario de exámenes, con la
+    convocatoria que el alumno elija en `convocatorias`."""
+    convocatorias: list[str] = []
 
 
 class GenerarPeticion(BaseModel):
@@ -93,6 +98,10 @@ class GenerarRespuesta(BaseModel):
     pero NO incluidas automáticamente (regla de inclusión sin verificar
     para esa convocatoria, ver `select/exams.py`) — el front las ofrece
     para añadir con un solo clic, nunca las deja simplemente ausentes."""
+    examenes_solo_examen_disponibles: dict[str, list[str]] = {}
+    """acrónimo -> convocatorias subidas con examen de esa asignatura,
+    para cada asignatura marcada `solo_examen` — el front las ofrece como
+    opciones a elegir (ver paso 3, tarjeta de la asignatura)."""
     generado_el: str | None = None
     """ISO — fecha/hora de generación de la página del PDF más reciente
     entre las que realmente alimentan esta selección (ver

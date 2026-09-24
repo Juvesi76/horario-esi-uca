@@ -119,6 +119,11 @@ def validate_selection(selection: SubjectSelection, pages: list[SchedulePage]) -
                 )
             )
 
+    # `solo_examen`: no ir a clase es la propia intención, no un olvido —
+    # avisar de cada letra sin grupo elegido sería ruido, no información.
+    if selection.solo_examen:
+        return warnings
+
     chosen_letters = {code[0] for code in selection.groups if available_codes and code in available_codes}
     for letter, codes in available_by_letter.items():
         if letter not in chosen_letters:

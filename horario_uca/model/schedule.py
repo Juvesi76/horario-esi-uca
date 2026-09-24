@@ -183,6 +183,19 @@ class SubjectSelection(BaseModel):
     curso: str
     itinerario: str | None = None
     groups: list[str]  # ["A1", "B3", "C5"] — vacío de una letra = ese tipo se descarta
+    solo_examen: bool = False
+    """True: asignatura llevada por libre — no genera ningún evento de
+    clase (normalmente con `groups` vacío) pero sí cuenta para el
+    calendario de exámenes. La regla automática por semestre
+    (`select/exams.py::CONVOCATORIA_AUTO_SEMESTER`) no aplica aquí: quien
+    lleva una asignatura por libre no tiene por qué coincidir con la
+    convocatoria de quien sí va a clase, así que la convocatoria se elige
+    explícitamente en `convocatorias`."""
+    convocatorias: list[str] = []
+    """Nombres de convocatoria elegidos explícitamente para esta
+    asignatura cuando `solo_examen` es True (p.ej. `["FEBRERO DE
+    2027"]`, tal cual `ExamCalendar.convocatoria`). Ignorado si
+    `solo_examen` es False."""
 
 
 class ExamEntry(BaseModel):

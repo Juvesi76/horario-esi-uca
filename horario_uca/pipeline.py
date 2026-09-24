@@ -44,7 +44,12 @@ from horario_uca.render.ics import build_ics
 from horario_uca.report import build_confirmation_report
 from horario_uca.resolve import resolve_events, validate_events_lectivo
 from horario_uca.select import filter_events, find_conflicts, validate_selection
-from horario_uca.select.exams import all_relevant_exam_codes, default_exam_codes
+from horario_uca.select.exams import (
+    all_relevant_exam_codes,
+    default_exam_codes,
+    explicit_exam_codes,
+    solo_examen_available_convocatorias,
+)
 
 # Códigos de validate_selection que impiden generar nada: la selección no
 # tiene un significado único o pide algo que no existe. El resto
@@ -213,6 +218,10 @@ class GenerateOutcome:
     selección, pero cuya inclusión automática no está verificada (ver
     `CONVOCATORIA_AUTO_SEMESTER`) — el alumno puede añadirlas a mano con
     `include_all_exam_convocatorias=True`, no están simplemente perdidas."""
+    solo_examen_convocatorias: dict[str, list[str]] = field(default_factory=dict)
+    """acrónimo -> convocatorias subidas con examen de esa asignatura,
+    para cada `SubjectSelection` con `solo_examen=True` — el front las
+    ofrece para que el alumno elija cuál quiere (nunca se añade sola)."""
     report_text: str = ""
     html: str | None = None
     ics: bytes | None = None
@@ -268,7 +277,13 @@ def generate_calendar(
     for exam_calendar in exam_calendars or []:
         auto_codes, infos = default_exam_codes(selections, pages, exam_calendar)
         relevant_codes = all_relevant_exam_codes(selections, pages, exam_calendar)
-        codes = relevant_codes if include_all_exam_convocatorias else auto_codes
+        # La elección explícita de una asignatura `solo_examen` se suma
+        # siempre, al margen de `include_all_exam_convocatorias` (ese flag
+        # es "adivina todas las convocatorias posibles"; esto es "el
+        # alumno ya eligió", no hace falta adivinar nada).
+        codes = (relevant_codes if include_all_exam_convocatorias else auto_codes) | explicit_exam_codes(
+            selections, pages, exam_calendar
+        )
         exam_infos.extend(infos)
         if codes:
             exams.extend(e for e in exam_calendar.entries if e.code in codes)
@@ -284,6 +299,20 @@ def generate_calendar(
             # la lista `exams`).
             exams_available.extend(e for e in exam_calendar.entries if e.code in relevant_codes)
             convocatorias_disponibles.append(exam_calendar.convocatoria)
+
+    solo_examen_conv = solo_examen_available_convocatorias(selections, pages, exam_calendars or [])
+    for s in selections:
+        if s.solo_examen and not s.convocatorias:
+            exam_infos.append(
+                ParseInfo(
+                    code="solo_examen_sin_convocatoria",
+                    message=(
+                        f"{s.acronym!r} está marcada 'solo examen' pero no tiene ninguna convocatoria "
+                        "elegida todavía — no se añadirá ningún examen suyo hasta que se elija una"
+                    ),
+                    page_index=0,
+                )
+            )
 
     # Por (curso, itinerario), no solo acrónimo — el mismo acrónimo puede
     # existir en páginas de curso distinto (p.ej. "CAL" en 1ºA Y en 1ºB,
@@ -328,6 +357,7 @@ def generate_calendar(
         approved_at=approved_at,
         exams=exams,
         exam_infos=exam_infos,
+        solo_examen_convocatorias=solo_examen_conv,
         exam_convocatorias_incluidas=convocatorias_incluidas,
         exam_convocatorias_disponibles=convocatorias_disponibles,
         report_text=report_text,
