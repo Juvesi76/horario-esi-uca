@@ -1264,10 +1264,34 @@
     $("conflict-banner-live").appendChild(buildConflictBanner(state.liveConflicts, { closable: false }));
   }
 
-  function conflictItem(c) {
+  // Sin la fecha por delante — vive dentro de `conflictDateItem`, que ya
+  // la muestra como cabecera del día.
+  function conflictPairLine(c) {
     const aCurso = !c.mismo_curso && c.a.curso ? ` (${c.a.curso})` : "";
     const bCurso = !c.mismo_curso && c.b.curso ? ` (${c.b.curso})` : "";
-    return el("li", null, [`${fechaLarga(c.fecha)}: ${c.a.asignatura} ${c.a.grupo}${aCurso} choca con ${c.b.asignatura} ${c.b.grupo}${bCurso}.`]);
+    return el("li", null, [`${c.a.asignatura} ${c.a.grupo}${aCurso} choca con ${c.b.asignatura} ${c.b.grupo}${bCurso}.`]);
+  }
+
+  // El backend da un `ConflictoSalida` por CADA PAR de eventos que se
+  // solapan — si tres o más grupos elegidos coinciden el mismo día, ese
+  // único día aporta varios pares, no una fecha extra. El número
+  // accionable para el alumno es "en cuántos días tengo un problema", no
+  // cuántos pares hay en los datos (mismo criterio y mismo motivo que
+  // `render/html.py::groupConflictsByDate` — no se importa de ahí porque
+  // este fichero genera su HTML de forma independiente, ver más abajo).
+  function groupConflictsByDate(conflicts) {
+    const byDate = new Map();
+    for (const c of conflicts) {
+      if (!byDate.has(c.fecha)) byDate.set(c.fecha, []);
+      byDate.get(c.fecha).push(c);
+    }
+    return byDate;
+  }
+  function conflictDateItem(fecha, pairs) {
+    return el("li", null, [
+      el("strong", null, [fechaLarga(fecha)]),
+      el("ul", null, pairs.map(conflictPairLine)),
+    ]);
   }
 
   // Mismo criterio de fecha local que fechaLarga (nunca Date + toISOString,
@@ -1305,16 +1329,23 @@
       if (!conflicts.length) return;
 
       const now = new Date();
-      const pendientes = conflicts.filter((c) => !isConflictPast(c, now));
-      const pasados = conflicts.filter((c) => isConflictPast(c, now));
+      // Agrupar ANTES de decidir pendiente/pasado — un día es "pendiente"
+      // si ALGUNO de sus pares todavía no ha terminado, "pasado" solo
+      // cuando TODOS sus pares ya terminaron.
+      const byDate = groupConflictsByDate(conflicts);
+      const pendientesDates = [];
+      const pasadasDates = [];
+      for (const [fecha, pairs] of byDate) {
+        (pairs.some((c) => !isConflictPast(c, now)) ? pendientesDates : pasadasDates).push([fecha, pairs]);
+      }
 
       if (closable && closed) {
         // Frase entera en singular y en plural, no un sufijo "(s)" pegado
         // — un plural mal formado ("1 fecha(s)") lo lee gente sin
         // conocimiento técnico.
-        const label = pendientes.length > 0
-          ? (pendientes.length === 1 ? `Ver la fecha que choca` : `Ver las ${pendientes.length} fechas que chocan`)
-          : (pasados.length === 1 ? `Ver el choque ya pasado` : `Ver los ${pasados.length} choques ya pasados`);
+        const label = pendientesDates.length > 0
+          ? (pendientesDates.length === 1 ? `Ver la fecha que choca` : `Ver las ${pendientesDates.length} fechas que chocan`)
+          : (pasadasDates.length === 1 ? `Ver la fecha que ya pasó` : `Ver las ${pasadasDates.length} fechas que ya pasaron`);
         wrap.appendChild(el("div", { class: "conflict-reopen" }, [
           el("button", { type: "button", onclick: () => { closed = false; paint(); } }, [label]),
         ]));
@@ -1323,27 +1354,31 @@
 
       const blocks = [];
       let headText;
-      const neutral = pendientes.length === 0;
+      const neutral = pendientesDates.length === 0;
       if (!neutral) {
-        const mismoCurso = pendientes.filter((c) => c.mismo_curso);
-        const otroCurso = pendientes.filter((c) => !c.mismo_curso);
-        headText = `${pendientes.length} ${pendientes.length === 1 ? "fecha próxima choca" : "fechas próximas chocan"} de horario`;
+        // Un día va a "entre cursos distintos" si ALGUNO de sus pares lo
+        // es — es el caso más difícil de los dos, esconderlo bajo "mismo
+        // curso" porque ese día también tuviera un par más sencillo
+        // sería lo contrario de útil.
+        const mismoCurso = pendientesDates.filter(([, pairs]) => pairs.every((c) => c.mismo_curso));
+        const otroCurso = pendientesDates.filter(([, pairs]) => pairs.some((c) => !c.mismo_curso));
+        headText = `${pendientesDates.length} ${pendientesDates.length === 1 ? "fecha próxima choca" : "fechas próximas chocan"} de horario`;
         if (mismoCurso.length) {
-          blocks.push(el("p", { class: "lede" }, [`${mismoCurso.length} dentro del mismo curso — se resuelven eligiendo otro grupo.`]));
-          blocks.push(el("ul", null, mismoCurso.map(conflictItem)));
+          blocks.push(el("p", { class: "lede" }, [`${mismoCurso.length} ${mismoCurso.length === 1 ? "fecha" : "fechas"} dentro del mismo curso — se resuelven eligiendo otro grupo.`]));
+          blocks.push(el("ul", null, mismoCurso.map(([fecha, pairs]) => conflictDateItem(fecha, pairs))));
         }
         if (otroCurso.length) {
-          blocks.push(el("p", { class: "lede" }, [`${otroCurso.length} entre cursos distintos — al cursar asignaturas de más de un curso a la vez puede que no exista ninguna combinación de grupos sin choques.`]));
-          blocks.push(el("ul", null, otroCurso.map(conflictItem)));
+          blocks.push(el("p", { class: "lede" }, [`${otroCurso.length} ${otroCurso.length === 1 ? "fecha" : "fechas"} entre cursos distintos — al cursar asignaturas de más de un curso a la vez puede que no exista ninguna combinación de grupos sin choques.`]));
+          blocks.push(el("ul", null, otroCurso.map(([fecha, pairs]) => conflictDateItem(fecha, pairs))));
         }
       } else {
         // Todos los choques de esta selección ya pasaron: no se oculta el
         // aviso entero (un alumno que vuelve más tarde no tendría forma de
         // saber que eligió una combinación incompatible), pero deja de ser
         // una alarma sobre algo que vaya a pasar.
-        headText = pasados.length === 1
-          ? `Esta combinación de grupos tuvo 1 choque de horario, ya pasado`
-          : `Esta combinación de grupos tuvo ${pasados.length} choques de horario, todos ya pasados`;
+        headText = pasadasDates.length === 1
+          ? `Esta combinación de grupos tuvo 1 fecha con choque de horario, ya pasada`
+          : `Esta combinación de grupos tuvo ${pasadasDates.length} fechas con choque de horario, todas ya pasadas`;
       }
 
       const banner = el("div", { class: "conflict-banner" + (neutral ? " neutral" : ""), role: neutral ? "status" : "alert" }, [

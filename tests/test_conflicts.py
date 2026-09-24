@@ -21,6 +21,8 @@ import pymupdf
 from horario_uca.extract import read_page
 from horario_uca.model import SubjectSelection
 from horario_uca.parse import parse_page
+from horario_uca.pipeline import parse_document, resolve_document
+from horario_uca.report import build_confirmation_report
 from horario_uca.resolve import resolve_events
 from horario_uca.select import filter_events, find_conflicts
 
@@ -83,3 +85,41 @@ def test_mismo_grupo_nominal_no_es_conflicto():
     )
     b = a.model_copy()
     assert find_conflicts([a, b]) == []
+
+
+def test_find_conflicts_da_un_par_por_cada_solape_no_uno_por_fecha(sample_pdf_path):
+    """`find_conflicts` cuenta PARES evento-evento, no fechas distintas —
+    un día con tres o más grupos elegidos coincidiendo aporta varios pares,
+    no uno. Fijado con el fixture del "repetidor" (5 asignaturas de 1ºA +
+    4 de 2ºA, ya documentado): 36 pares, pero solo 32 fechas distintas
+    (12 dentro del mismo curso + 20 entre cursos). La interfaz (`render/
+    html.py`, `web/static/index.html`, `report.py`) agrupa estos pares por
+    fecha antes de contar — este test fija el dato crudo del que depende
+    esa agrupación, para que un cambio futuro en `find_conflicts` no
+    rompa esa cuenta en silencio."""
+    pages = parse_document(str(sample_pdf_path))
+    events, _ = resolve_document(pages)
+    selections = [
+        SubjectSelection(acronym="CAL", curso="1ºA", groups=["A1"]),
+        SubjectSelection(acronym="IG", curso="1ºA", groups=["A1"]),
+        SubjectSelection(acronym="IP", curso="1ºA", groups=["C1"]),
+        SubjectSelection(acronym="MD", curso="1ºA", groups=["A1"]),
+        SubjectSelection(acronym="SDIG", curso="1ºA", groups=["D3"]),
+        SubjectSelection(acronym="AAED", curso="2ºA", groups=["A1"]),
+        SubjectSelection(acronym="AC", curso="2ºA", groups=["A1"]),
+        SubjectSelection(acronym="OGE", curso="2ºA", groups=["A1"]),
+        SubjectSelection(acronym="RC", curso="2ºA", groups=["A1"]),
+    ]
+    filtered = filter_events(events, selections)
+    conflicts = find_conflicts(filtered)
+    assert len(conflicts) == 36
+    dates = {c.date for c in conflicts}
+    assert len(dates) == 32
+
+    report = build_confirmation_report(selections, pages, filtered)
+    assert "12 fechas dentro del mismo curso" in report
+    assert "20 fechas entre cursos distintos" in report
+    # El informe también anida el detalle por par bajo su fecha — nunca
+    # menos pares que fechas (cada fecha lleva al menos uno) ni menos de
+    # 36 líneas de detalle en total.
+    assert report.count(" choca con ") == 36

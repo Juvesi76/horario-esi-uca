@@ -1247,12 +1247,35 @@ document.getElementById("content").addEventListener("click", (evt) => {
   if (dayEl) goToWeekOf(dayEl.dataset.day);
 });
 
-function conflictItem(c) {
+// Sin la fecha por delante — a diferencia de la versión anterior, ahora
+// vive DENTRO de un `conflictDateItem` que ya la muestra como cabecera
+// del día, ver más abajo.
+function conflictPairLine(c) {
   const aRoom = c.a.room ? `, aula ${c.a.room}` : "";
   const bRoom = c.b.room ? `, aula ${c.b.room}` : "";
   const aCurso = !c.mismoCurso && c.a.curso ? ` (${c.a.curso})` : "";
   const bCurso = !c.mismoCurso && c.b.curso ? ` (${c.b.curso})` : "";
-  return `<li>${fechaLarga(c.date)}: <strong>${c.a.acronym} ${c.a.group}</strong>${aCurso} (${c.a.start}–${c.a.end}${aRoom}) choca con <strong>${c.b.acronym} ${c.b.group}</strong>${bCurso} (${c.b.start}–${c.b.end}${bRoom})</li>`;
+  return `<li><strong>${c.a.acronym} ${c.a.group}</strong>${aCurso} (${c.a.start}–${c.a.end}${aRoom}) choca con <strong>${c.b.acronym} ${c.b.group}</strong>${bCurso} (${c.b.start}–${c.b.end}${bRoom})</li>`;
+}
+
+// `find_conflicts` (Python) da un `ScheduleConflict` por CADA PAR de
+// eventos que se solapan — si tres o más grupos elegidos coinciden el
+// mismo día, ese único día aporta varios pares, no una fecha extra. El
+// número que el alumno necesita para decidir es "en cuántos días tengo
+// un problema", no cuántos pares hay en los datos (verificado con datos
+// reales: el fixture del repetidor da 36 pares pero solo 32 fechas
+// distintas). Agrupar por fecha antes de contar, sin
+// perder el detalle por par: se anida dentro de su día.
+function groupConflictsByDate(conflicts) {
+  const byDate = new Map();
+  for (const c of conflicts) {
+    if (!byDate.has(c.date)) byDate.set(c.date, []);
+    byDate.get(c.date).push(c);
+  }
+  return byDate;
+}
+function conflictDateItem(date, pairs) {
+  return `<li><strong>${fechaLarga(date)}</strong><ul>${pairs.map(conflictPairLine).join("")}</ul></li>`;
 }
 
 // Un choque es "pasado" cuando ha terminado la clase más tardía de las dos
@@ -1290,16 +1313,24 @@ function buildConflictBanner() {
   }
 
   const now = new Date();
-  const pendientes = CONFLICTS.filter(c => !isConflictPast(c, now));
-  const pasados = CONFLICTS.filter(c => isConflictPast(c, now));
+  // Agrupar ANTES de decidir pendiente/pasado: un día es "pendiente" si
+  // ALGUNO de sus pares todavía no ha terminado, "pasado" solo cuando
+  // TODOS sus pares ya terminaron — decidirlo por par y agrupar después
+  // reintroduciría la misma incoherencia que el recuento (ver arriba).
+  const byDate = groupConflictsByDate(CONFLICTS);
+  const pendientesDates = [];
+  const pasadasDates = [];
+  for (const [date, pairs] of byDate) {
+    (pairs.some(c => !isConflictPast(c, now)) ? pendientesDates : pasadasDates).push([date, pairs]);
+  }
 
   if (conflictBannerClosed) {
     box.style.display = "none";
     box.innerHTML = "";
     reopen.style.display = "block";
-    const label = pendientes.length > 0
-      ? pluralPhrase(pendientes.length, `Ver la fecha que choca`, `Ver las ${pendientes.length} fechas que chocan`)
-      : pluralPhrase(pasados.length, `Ver el choque ya pasado`, `Ver los ${pasados.length} choques ya pasados`);
+    const label = pendientesDates.length > 0
+      ? pluralPhrase(pendientesDates.length, `Ver la fecha que choca`, `Ver las ${pendientesDates.length} fechas que chocan`)
+      : pluralPhrase(pasadasDates.length, `Ver la fecha que ya pasó`, `Ver las ${pasadasDates.length} fechas que ya pasaron`);
     reopen.innerHTML = `<button type="button" id="conflict-reopen-btn">${label}</button>`;
     document.getElementById("conflict-reopen-btn").addEventListener("click", () => {
       conflictBannerClosed = false;
@@ -1312,25 +1343,29 @@ function buildConflictBanner() {
 
   let html = `<button type="button" class="conflict-close" aria-label="Cerrar aviso">&times;</button>`;
 
-  if (pendientes.length > 0) {
+  if (pendientesDates.length > 0) {
     // Filtra la LISTA a las fechas pendientes y ajusta el recuento a ellas
     // — los choques ya pasados no desaparecen del todo (ver la rama de
     // abajo si no quedara ninguno pendiente), pero no ocupan sitio en la
     // lista de "lo que viene" mientras siga habiendo alguna pendiente.
     box.classList.remove("neutral");
-    const mismoCurso = pendientes.filter(c => c.mismoCurso);
-    const otroCurso = pendientes.filter(c => !c.mismoCurso);
-    html += `<span class="conflict-title">⚠ ${pluralPhrase(pendientes.length,
+    // Un día va a "entre cursos distintos" si ALGUNO de sus pares lo es
+    // — es el caso más difícil de resolver de los dos, y esconderlo bajo
+    // "mismo curso" porque ese día también tiene un par más sencillo
+    // sería lo contrario de útil.
+    const mismoCurso = pendientesDates.filter(([, pairs]) => pairs.every(c => c.mismoCurso));
+    const otroCurso = pendientesDates.filter(([, pairs]) => pairs.some(c => !c.mismoCurso));
+    html += `<span class="conflict-title">⚠ ${pluralPhrase(pendientesDates.length,
       `1 fecha próxima con combinación de grupos incompatible`,
-      `${pendientes.length} fechas próximas con combinación de grupos incompatible`)}</span>`;
+      `${pendientesDates.length} fechas próximas con combinación de grupos incompatible`)}</span>`;
     if (mismoCurso.length) {
-      html += `<p>${mismoCurso.length} dentro del mismo curso — se resuelven eligiendo otro grupo:</p>` +
-        `<ul>${mismoCurso.map(conflictItem).join("")}</ul>`;
+      html += `<p>${pluralPhrase(mismoCurso.length, `1 fecha dentro del mismo curso`, `${mismoCurso.length} fechas dentro del mismo curso`)} — se resuelven eligiendo otro grupo:</p>` +
+        `<ul>${mismoCurso.map(([date, pairs]) => conflictDateItem(date, pairs)).join("")}</ul>`;
     }
     if (otroCurso.length) {
-      html += `<p>${otroCurso.length} entre cursos distintos — al cursar asignaturas de más de un curso a la ` +
+      html += `<p>${pluralPhrase(otroCurso.length, `1 fecha entre cursos distintos`, `${otroCurso.length} fechas entre cursos distintos`)} — al cursar asignaturas de más de un curso a la ` +
         `vez puede que no exista ninguna combinación de grupos sin choques:</p>` +
-        `<ul>${otroCurso.map(conflictItem).join("")}</ul>`;
+        `<ul>${otroCurso.map(([date, pairs]) => conflictDateItem(date, pairs)).join("")}</ul>`;
     }
   } else {
     // Todos los choques de esta selección ya pasaron: si el aviso
@@ -1339,9 +1374,9 @@ function buildConflictBanner() {
     // incompatible. Se queda, pero en tono neutro — no es una alarma sobre
     // algo que vaya a pasar.
     box.classList.add("neutral");
-    html += `<span class="conflict-title">${pluralPhrase(pasados.length,
-      `Esta combinación de grupos tuvo 1 choque de horario, ya pasado.`,
-      `Esta combinación de grupos tuvo ${pasados.length} choques de horario, todos ya pasados.`)}</span>`;
+    html += `<span class="conflict-title">${pluralPhrase(pasadasDates.length,
+      `Esta combinación de grupos tuvo 1 fecha con choque de horario, ya pasada.`,
+      `Esta combinación de grupos tuvo ${pasadasDates.length} fechas con choque de horario, todas ya pasadas.`)}</span>`;
   }
 
   box.style.display = "block";
@@ -1374,14 +1409,38 @@ function examClassConflictEndDate(c) {
   return examEnd > classEnd ? examEnd : classEnd;
 }
 
+// Sin la fecha por delante — vive dentro de `examConflictDateItem`, que
+// ya la muestra como cabecera del día (mismo criterio que
+// `conflictPairLine`/`conflictDateItem` para los choques de clase).
 function examConflictItem(c) {
   const sentence = c.certain
-    ? `El ${fechaLarga(c.date)} a las ${c.a.start} coinciden los exámenes de ${c.a.name} y ${c.b.name}. Cuando se abra el plazo, solicita llamamiento especial para una de ellas.`
-    : `El ${fechaLarga(c.date)} hay examen de ${c.a.name} (${c.a.start}) y de ${c.b.name} (${c.b.start}) — sin hora de fin no se puede confirmar si se solapan, revísalo cuando se abra el plazo.`;
+    ? `A las ${c.a.start} coinciden los exámenes de ${c.a.name} y ${c.b.name}. Cuando se abra el plazo, solicita llamamiento especial para una de ellas.`
+    : `Hay examen de ${c.a.name} (${c.a.start}) y de ${c.b.name} (${c.b.start}) — sin hora de fin no se puede confirmar si se solapan, revísalo cuando se abra el plazo.`;
   return `<li>${sentence}</li>`;
 }
 function examClassConflictItem(c) {
-  return `<li>El ${fechaLarga(c.date)} tienes clase de ${c.event.acronym} ${c.event.group} (${c.event.start}–${c.event.end}) a la vez que el examen de ${c.exam.name} (${c.exam.start}, duración estimada).</li>`;
+  return `<li>Tienes clase de ${c.event.acronym} ${c.event.group} (${c.event.start}–${c.event.end}) a la vez que el examen de ${c.exam.name} (${c.exam.start}, duración estimada).</li>`;
+}
+
+// Mismo motivo que `groupConflictsByDate`: `EXAM_CONFLICTS`/
+// `EXAM_CLASS_CONFLICTS` traen un objeto por PAR (examen↔examen o
+// examen↔clase), y un mismo día puede aportar varios — se agrupan los
+// dos tipos JUNTOS bajo su fecha (un día con un choque examen↔examen Y
+// uno examen↔clase sigue siendo UN día, no dos) antes de contar o de
+// decidir pendiente/pasado.
+function groupExamConflictsByDate(examConflicts, examClassConflicts) {
+  const byDate = new Map();
+  const get = (date) => {
+    if (!byDate.has(date)) byDate.set(date, { examenes: [], clase: [] });
+    return byDate.get(date);
+  };
+  for (const c of examConflicts) get(c.date).examenes.push(c);
+  for (const c of examClassConflicts) get(c.date).clase.push(c);
+  return byDate;
+}
+function examConflictDateItem(date, group) {
+  const items = group.examenes.map(examConflictItem).join("") + group.clase.map(examClassConflictItem).join("");
+  return `<li><strong>${fechaLarga(date)}</strong><ul>${items}</ul></li>`;
 }
 
 // Mismo patrón visual que `buildConflictBanner` (cerrar/reabrir sin
@@ -1402,19 +1461,22 @@ function buildExamConflictBanner() {
   }
 
   const now = new Date();
-  const pendientesExamenes = EXAM_CONFLICTS.filter(c => examConflictEndDate(c) > now);
-  const pasadosExamenes = EXAM_CONFLICTS.filter(c => examConflictEndDate(c) <= now);
-  const pendientesClase = EXAM_CLASS_CONFLICTS.filter(c => examClassConflictEndDate(c) > now);
-  const pasadosClase = EXAM_CLASS_CONFLICTS.filter(c => examClassConflictEndDate(c) <= now);
-  const pendientesTotal = pendientesExamenes.length + pendientesClase.length;
-  const pasadosTotal = pasadosExamenes.length + pasadosClase.length;
+  const byDate = groupExamConflictsByDate(EXAM_CONFLICTS, EXAM_CLASS_CONFLICTS);
+  const pendientesDates = [];
+  const pasadasDates = [];
+  for (const [date, group] of byDate) {
+    const algunoPendiente =
+      group.examenes.some(c => examConflictEndDate(c) > now) ||
+      group.clase.some(c => examClassConflictEndDate(c) > now);
+    (algunoPendiente ? pendientesDates : pasadasDates).push([date, group]);
+  }
 
   if (examConflictBannerClosed) {
     box.style.display = "none"; box.innerHTML = "";
     reopen.style.display = "block";
-    const label = pendientesTotal > 0
-      ? pluralPhrase(pendientesTotal, `Ver el choque de examen`, `Ver los ${pendientesTotal} choques de examen`)
-      : pluralPhrase(pasadosTotal, `Ver el choque de examen ya pasado`, `Ver los ${pasadosTotal} choques de examen ya pasados`);
+    const label = pendientesDates.length > 0
+      ? pluralPhrase(pendientesDates.length, `Ver la fecha con choque de examen`, `Ver las ${pendientesDates.length} fechas con choque de examen`)
+      : pluralPhrase(pasadasDates.length, `Ver la fecha con choque de examen ya pasada`, `Ver las ${pasadasDates.length} fechas con choque de examen ya pasadas`);
     reopen.innerHTML = `<button type="button" id="exam-conflict-reopen-btn">${label}</button>`;
     document.getElementById("exam-conflict-reopen-btn").addEventListener("click", () => {
       examConflictBannerClosed = false;
@@ -1426,22 +1488,17 @@ function buildExamConflictBanner() {
 
   let html = `<button type="button" class="conflict-close" aria-label="Cerrar aviso">&times;</button>`;
 
-  if (pendientesTotal > 0) {
+  if (pendientesDates.length > 0) {
     box.classList.remove("neutral");
-    html += `<span class="conflict-title">⚠ ${pluralPhrase(pendientesTotal,
-      `1 choque de examen próximo`,
-      `${pendientesTotal} choques de examen próximos`)}</span>`;
-    if (pendientesExamenes.length) {
-      html += `<ul>${pendientesExamenes.map(examConflictItem).join("")}</ul>`;
-    }
-    if (pendientesClase.length) {
-      html += `<ul>${pendientesClase.map(examClassConflictItem).join("")}</ul>`;
-    }
+    html += `<span class="conflict-title">⚠ ${pluralPhrase(pendientesDates.length,
+      `1 fecha próxima con choque de examen`,
+      `${pendientesDates.length} fechas próximas con choque de examen`)}</span>`;
+    html += `<ul>${pendientesDates.map(([date, group]) => examConflictDateItem(date, group)).join("")}</ul>`;
   } else {
     box.classList.add("neutral");
-    html += `<span class="conflict-title">${pluralPhrase(pasadosTotal,
-      `Esta selección tuvo 1 choque de examen, ya pasado.`,
-      `Esta selección tuvo ${pasadosTotal} choques de examen, todos ya pasados.`)}</span>`;
+    html += `<span class="conflict-title">${pluralPhrase(pasadasDates.length,
+      `Esta selección tuvo 1 fecha con choque de examen, ya pasada.`,
+      `Esta selección tuvo ${pasadasDates.length} fechas con choque de examen, todas ya pasadas.`)}</span>`;
   }
 
   box.style.display = "block";

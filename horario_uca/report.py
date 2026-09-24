@@ -57,10 +57,19 @@ def build_confirmation_report(
     if not conflicts:
         lines.append("  sin conflictos: ningún par de eventos de la selección se solapa en horas")
     else:
-        same_course = [c for c in conflicts if c.event_a.curso == c.event_b.curso]
-        cross_course = [c for c in conflicts if c.event_a.curso != c.event_b.curso]
+        # `find_conflicts` da un `ScheduleConflict` por CADA PAR de eventos
+        # que se solapan — si tres o más grupos elegidos coinciden el mismo
+        # día, ese único día aporta varios pares, no una fecha extra. El
+        # número accionable para quien lee el informe es "en cuántos días
+        # tiene un problema", no cuántos pares hay en los datos (verificado
+        # con datos reales: el fixture del repetidor da 36 pares pero solo
+        # 32 fechas distintas). El detalle por par no se
+        # pierde, se anida bajo su fecha.
+        by_date: dict[str, list] = {}
+        for c in conflicts:
+            by_date.setdefault(c.date, []).append(c)
 
-        def _line(c) -> str:
+        def _pair_line(c) -> str:
             a, b = c.event_a, c.event_b
             a_room = f", aula {a.room}" if a.room else ""
             b_room = f", aula {b.room}" if b.room else ""
@@ -68,26 +77,44 @@ def build_confirmation_report(
             a_curso = f" ({a.curso})" if cross else ""
             b_curso = f" ({b.curso})" if cross else ""
             return (
-                f"    {c.date}: {a.subject_acronym} {a.group_code}{a_curso} ({a.start_time}-{a.end_time}{a_room}) "
+                f"      {a.subject_acronym} {a.group_code}{a_curso} ({a.start_time}-{a.end_time}{a_room}) "
                 f"choca con {b.subject_acronym} {b.group_code}{b_curso} ({b.start_time}-{b.end_time}{b_room})"
             )
 
-        if same_course:
-            fecha_word = "1 fecha" if len(same_course) == 1 else f"{len(same_course)} fechas"
+        def _date_block(dates: dict[str, list]) -> list[str]:
+            block = []
+            for date in sorted(dates):
+                block.append(f"    {date}:")
+                block.extend(_pair_line(c) for c in dates[date])
+            return block
+
+        # Una fecha va a "entre cursos distintos" si ALGUNO de sus pares lo
+        # es — es el caso más difícil de resolver de los dos, y esconderlo
+        # bajo "mismo curso" porque esa fecha también tuviera un par más
+        # sencillo sería lo contrario de útil.
+        same_course_dates = {
+            d: pairs for d, pairs in by_date.items()
+            if all(c.event_a.curso == c.event_b.curso for c in pairs)
+        }
+        cross_course_dates = {
+            d: pairs for d, pairs in by_date.items()
+            if any(c.event_a.curso != c.event_b.curso for c in pairs)
+        }
+
+        if same_course_dates:
+            fecha_word = "1 fecha" if len(same_course_dates) == 1 else f"{len(same_course_dates)} fechas"
             lines.append(
                 f"  {fecha_word} dentro del mismo curso — se resuelven eligiendo otro grupo:"
             )
-            for c in same_course:
-                lines.append(_line(c))
+            lines.extend(_date_block(same_course_dates))
 
-        if cross_course:
-            fecha_word = "1 fecha" if len(cross_course) == 1 else f"{len(cross_course)} fechas"
+        if cross_course_dates:
+            fecha_word = "1 fecha" if len(cross_course_dates) == 1 else f"{len(cross_course_dates)} fechas"
             lines.append(
                 f"  {fecha_word} entre cursos distintos — al cursar asignaturas de más de un "
                 "curso a la vez puede que no exista ninguna combinación de grupos sin choques:"
             )
-            for c in cross_course:
-                lines.append(_line(c))
+            lines.extend(_date_block(cross_course_dates))
 
     lines.append("")
     lines.append("=== Resumen de eventos ===")
