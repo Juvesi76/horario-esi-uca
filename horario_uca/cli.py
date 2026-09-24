@@ -13,12 +13,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""CLI: `horario generar`, `horario listar`, `horario debug`.
+"""CLI: `horario generar`, `horario listar`, `horario debug`, `horario diagnostico`.
 
     horario generar data/GII_horario2627.pdf "MD:1ºA:A1,B1" "CAL:1ºA:A1,B3,C1"
     horario generar data/GII_horario2627.pdf --config seleccion.yaml
     horario listar data/GII_horario2627.pdf --curso 4º
     horario debug data/GII_horario2627.pdf --page 0
+    horario diagnostico data/GII_horario2627.pdf data/GIA.horario2627.pdf
 
 Sintaxis de selección por línea de comandos: `ACRONIMO:CURSO:GRUPOS` (curso
 sin itinerario o con itinerario no ambiguo) o `ACRONIMO:CURSO:ITINERARIO:GRUPOS`
@@ -35,6 +36,7 @@ from pathlib import Path
 import yaml
 
 from horario_uca import debug as debug_module
+from horario_uca.diagnostico import build_diagnostico_report
 from horario_uca.model import ParseWarning, SubjectSelection
 from horario_uca.pipeline import build_catalog, generate_calendar, parse_document
 
@@ -208,6 +210,12 @@ def cmd_debug(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_diagnostico(args: argparse.Namespace) -> int:
+    report, sin_anomalias = build_diagnostico_report(args.pdf)
+    print(report)
+    return 0 if sin_anomalias else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="horario")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -234,6 +242,12 @@ def build_parser() -> argparse.ArgumentParser:
     dbg.add_argument("--page", type=int, required=True, help="page_index, 0-based")
     dbg.add_argument("--out", default=None)
 
+    diag = sub.add_parser(
+        "diagnostico",
+        help="comprueba si uno o varios PDFs siguen teniendo el formato esperado (útil tras republicar horarios)",
+    )
+    diag.add_argument("pdf", nargs="+", help="uno o varios PDFs de horarios de la ESI")
+
     return parser
 
 
@@ -246,6 +260,8 @@ def main() -> None:
         sys.exit(cmd_listar(args))
     elif args.command == "debug":
         sys.exit(cmd_debug(args))
+    elif args.command == "diagnostico":
+        sys.exit(cmd_diagnostico(args))
 
 
 if __name__ == "__main__":

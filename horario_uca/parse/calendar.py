@@ -218,6 +218,22 @@ def parse_calendar_day_status(
             return abs(month_headers[hi][1] - cluster_x0)
         return abs(row_y - month_headers[hi][2])
 
+    def _invalid_for_month(day: int, month_num: int) -> bool:
+        try:
+            date(_year_for_month(academic_year, month_num), month_num, day)
+        except (ValueError, OverflowError):
+            return True
+        return False
+
+    # Un cluster por (fila, grupo de dígitos contiguos), recogido de TODAS las
+    # filas de la página antes de intentar la fusión por contigüidad de
+    # fechas más abajo — ver por qué en el comentario de esa fusión.
+    all_clusters: list[list[RawSpan]] = []
+    all_row_ys: list[float] = []
+    all_months: list[int] = []
+    all_dates: list[list[date]] = []
+    all_week_numbers: list[int | None] = []
+
     for row_y, spans_in_row in rows.items():
         clusters = _cluster_by_gap(spans_in_row, cluster_gap)
         cluster_x0s = [c[0].bbox[0] for c in clusters]
@@ -236,13 +252,6 @@ def parse_calendar_day_status(
         # directamente un día inválido para ese mes (p.ej. día 31 asignado a
         # un mes de 30) — visto en páginas fuera de la 0. Se trata igual que
         # el duplicado: retroceder al mes anterior.
-        def _invalid_for_month(day: int, month_num: int) -> bool:
-            try:
-                date(_year_for_month(academic_year, month_num), month_num, day)
-            except (ValueError, OverflowError):
-                return True
-            return False
-
         seen_day_month: dict[tuple[int, int], int] = {}
         for i in sorted(range(len(clusters)), key=lambda i: _header_distance(header_idx[i], cluster_x0s[i], row_y)):
             for s in clusters[i]:
@@ -287,83 +296,116 @@ def parse_calendar_day_status(
             marker = min(candidates, key=lambda m: cluster_x0 - m.bbox[0], default=None)
             week_numbers.append(int(marker.text.strip()) if marker else None)
 
-        # Un fragmento de días en el borde de un mes puede no tener su
-        # propio marcador porque el marcador real está pegado al cluster
-        # DOMINANTE de esa semana partida, en el mes vecino de la misma fila
-        # (una semana que empieza en un mes y termina en el siguiente).
-        # Todos los bloques de mes de la página comparten la misma rejilla
-        # de filas, así que
-        # "misma fila" NO basta para decidir que dos clusters pertenecen a
-        # la misma semana partida (probado: producía falsos positivos entre
-        # Diciembre y Enero en filas no relacionadas). El criterio correcto,
-        # sin ambigüedad, es la CONTIGÜIDAD DE FECHAS: el cluster resuelto
-        # cuya fecha máxima es exactamente el día anterior a la fecha mínima
-        # de este fragmento (o viceversa).
-        for i, week_number in enumerate(week_numbers):
-            if week_number is not None or not cluster_dates[i]:
+        all_clusters.extend(clusters)
+        all_row_ys.extend([row_y] * len(clusters))
+        all_months.extend(cluster_months)
+        all_dates.extend(cluster_dates)
+        all_week_numbers.extend(week_numbers)
+
+    # Un fragmento de días en el borde de un mes puede no tener su propio
+    # marcador porque el marcador real está pegado al cluster DOMINANTE de
+    # esa semana partida, en el mes vecino — que puede caer en una fila
+    # `row_y` DISTINTA de la de este fragmento: cada bloque de mes arranca su
+    # propia rejilla en su propia fila 1 (donde cae el día 1 de ese mes), así
+    # que dos meses consecutivos solo comparten `row_y` en la fila que
+    # contiene la semana partida SI el número de filas previas de cada mes
+    # coincide — no es una garantía general. Visto con datos reales: el
+    # domingo 1 de noviembre cae en la fila 1 del bloque de noviembre
+    # (arriba del todo de la página), mientras que el sábado 31 de octubre
+    # cae en una fila de octubre varias filas más abajo — la búsqueda de
+    # fusión debe recorrer TODOS los clusters de la página, no solo los de
+    # la misma fila (antes de este arreglo, quedaban sin fusionar y el 1 de
+    # noviembre desaparecía en silencio de esa semana). El criterio de fondo
+    # sigue siendo el mismo, "misma fila" nunca bastó por sí solo (ver más
+    # abajo): la CONTIGÜIDAD DE FECHAS — el cluster resuelto cuya fecha
+    # máxima es exactamente el día anterior a la fecha mínima de este
+    # fragmento (o viceversa) — es el único criterio sin ambigüedad.
+    for i, week_number in enumerate(all_week_numbers):
+        if week_number is not None or not all_dates[i]:
+            continue
+        i_min, i_max = all_dates[i][0], all_dates[i][-1]
+        # Un fragmento puede, en teoría, tener un vecino contiguo tanto por
+        # delante como por detrás en el calendario — verificado con datos
+        # reales que ESO PASA de verdad (un domingo suelto que cierra una
+        # semana es, a la vez, el día justo antes del lunes que abre la
+        # semana siguiente). Sin desambiguar, un domingo huérfano puede
+        # fusionarse con la semana SIGUIENTE en vez de con la que de verdad
+        # completa — visto exactamente así: `i_min`/`i_max` con
+        # `weekday()==6` (domingo) enlazado a la semana que empieza el lunes
+        # siguiente, dejando la semana anterior (la que de verdad le
+        # corresponde) incompleta en silencio. El día de la semana del
+        # propio fragmento decide sin ambigüedad qué dirección es la
+        # correcta: si no empieza en lunes, solo puede ser el CIERRE de una
+        # semana ya empezada (buscar hacia atrás); si no acaba en domingo,
+        # solo puede ser el ARRANQUE de la siguiente (buscar hacia
+        # adelante) — un fragmento de un solo día que cae en domingo cumple
+        # la primera condición y no la segunda, así que solo mira atrás.
+        try_backward = i_min.weekday() != 0
+        try_forward = i_max.weekday() != 6
+        for j in range(len(all_clusters)):
+            if all_week_numbers[j] is None or not all_dates[j]:
                 continue
-            i_min, i_max = cluster_dates[i][0], cluster_dates[i][-1]
-            for j in range(len(clusters)):
-                if week_numbers[j] is None or not cluster_dates[j]:
-                    continue
-                j_min, j_max = cluster_dates[j][0], cluster_dates[j][-1]
-                if j_max + timedelta(days=1) == i_min or i_max + timedelta(days=1) == j_min:
-                    week_numbers[i] = week_numbers[j]
-                    break
+            j_min, j_max = all_dates[j][0], all_dates[j][-1]
+            if try_backward and j_max + timedelta(days=1) == i_min:
+                all_week_numbers[i] = all_week_numbers[j]
+                break
+            if try_forward and i_max + timedelta(days=1) == j_min:
+                all_week_numbers[i] = all_week_numbers[j]
+                break
 
-        for cluster, week_number, month_num in zip(clusters, week_numbers, cluster_months):
-            cluster_x0 = cluster[0].bbox[0]
-            year = _year_for_month(academic_year, month_num)
+    for cluster, row_y, month_num, week_number in zip(all_clusters, all_row_ys, all_months, all_week_numbers):
+        cluster_x0 = cluster[0].bbox[0]
+        year = _year_for_month(academic_year, month_num)
 
-            if week_number is None:
-                cluster_colors = {s.color for s in cluster}
-                in_period = bool(cluster_colors & IN_PERIOD_COLORS)
-                if in_period:
-                    # Íntegramente NO_LECTIVO (verificado en las 24 páginas:
-                    # 34/34 casos así, 0 mixtos o con algún día LECTIVO) es
-                    # el resultado esperado de un tramo de vacaciones sin
-                    # semana numerada — no es una anomalía, es ParseInfo. Si
-                    # el tramo tuviera algún día LECTIVO, sí sería una fecha
-                    # real perdida y debe seguir siendo ParseWarning.
-                    entry = (
-                        ParseInfo
-                        if cluster_colors == {(255, 0, 0)}
-                        else ParseWarning
-                    )(
-                        code="fila_calendario_sin_semana",
-                        message=f"mes={month_num}, y={row_y}, x0={cluster_x0:.1f}: no se encontró número de semana",
+        if week_number is None:
+            cluster_colors = {s.color for s in cluster}
+            in_period = bool(cluster_colors & IN_PERIOD_COLORS)
+            if in_period:
+                # Íntegramente NO_LECTIVO (verificado en las 24 páginas:
+                # 34/34 casos así, 0 mixtos o con algún día LECTIVO) es
+                # el resultado esperado de un tramo de vacaciones sin
+                # semana numerada — no es una anomalía, es ParseInfo. Si
+                # el tramo tuviera algún día LECTIVO, sí sería una fecha
+                # real perdida y debe seguir siendo ParseWarning.
+                entry = (
+                    ParseInfo
+                    if cluster_colors == {(255, 0, 0)}
+                    else ParseWarning
+                )(
+                    code="fila_calendario_sin_semana",
+                    message=f"mes={month_num}, y={row_y}, x0={cluster_x0:.1f}: no se encontró número de semana",
+                    page_index=raw.page_index,
+                )
+                (infos if isinstance(entry, ParseInfo) else warnings).append(entry)
+            continue
+
+        for s in cluster:
+            day = int(s.text.strip())
+            if _invalid_for_month(day, month_num):
+                continue  # ya registrado como dia_invalido_para_mes arriba
+            status = COLOR_STATUS.get(s.color)
+            if status is None:
+                warnings.append(
+                    ParseWarning(
+                        code="color_dia_calendario_desconocido",
+                        message=f"día {day}/{month_num}/{year}: color {s.color} no reconocido",
+                        page_index=raw.page_index,
+                        bbox=s.bbox,
+                    )
+                )
+                continue
+            day_date = date(year, month_num, day)
+            weekday = day_date.weekday()
+            key = (week_number, weekday)
+            if key in result and result[key].status != status:
+                warnings.append(
+                    ParseWarning(
+                        code="calendario_semana_dia_inconsistente",
+                        message=f"semana {week_number}, weekday {weekday}: {result[key].status} vs {status} (día {day}/{month_num})",
                         page_index=raw.page_index,
                     )
-                    (infos if isinstance(entry, ParseInfo) else warnings).append(entry)
-                continue
-
-            for s in cluster:
-                day = int(s.text.strip())
-                if _invalid_for_month(day, month_num):
-                    continue  # ya registrado como dia_invalido_para_mes arriba
-                status = COLOR_STATUS.get(s.color)
-                if status is None:
-                    warnings.append(
-                        ParseWarning(
-                            code="color_dia_calendario_desconocido",
-                            message=f"día {day}/{month_num}/{year}: color {s.color} no reconocido",
-                            page_index=raw.page_index,
-                            bbox=s.bbox,
-                        )
-                    )
-                    continue
-                day_date = date(year, month_num, day)
-                weekday = day_date.weekday()
-                key = (week_number, weekday)
-                if key in result and result[key].status != status:
-                    warnings.append(
-                        ParseWarning(
-                            code="calendario_semana_dia_inconsistente",
-                            message=f"semana {week_number}, weekday {weekday}: {result[key].status} vs {status} (día {day}/{month_num})",
-                            page_index=raw.page_index,
-                        )
-                    )
-                result[key] = DayStatus(date=day_date.isoformat(), status=status)
+                )
+            result[key] = DayStatus(date=day_date.isoformat(), status=status)
 
     return result, warnings, infos
 

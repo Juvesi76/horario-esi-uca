@@ -76,6 +76,37 @@ def test_page0_calendar_full_weeks_have_seven_days(sample_pdf_path):
     assert len(by_week[16].days) <= 7
 
 
+def test_page15_calendar_full_weeks_have_seven_days(sample_pdf_path):
+    """Caso real que la versión anterior de este test (solo página 0) no
+    cazaba: la fusión de un fragmento huérfano de un solo día podía elegir
+    la dirección EQUIVOCADA (hacia la semana siguiente en vez de hacia la
+    que completa) cuando el vecino "hacia delante" aparecía antes que el
+    vecino "hacia atrás" en el orden de inserción — depende del orden en
+    que PyMuPDF entrega las filas, así que solo se manifestaba en algunas
+    páginas. En la página 15 (4º, Itinerario de Ingeniería de Computadores)
+    el domingo 1/11/2026 se fusionaba con la semana 7 (2-8/11) en vez de con
+    la semana 6 (26/10-1/11), dejando la semana 6 con 6 días y sin ningún
+    aviso. Arreglado desambiguando por día de la semana del propio
+    fragmento: un fragmento que no empieza en lunes solo puede completar
+    una semana ya empezada (mirar hacia atrás); uno que no acaba en
+    domingo, solo puede abrir la siguiente (mirar hacia delante)."""
+    doc = pymupdf.open(sample_pdf_path)
+    raw = read_page(doc, 15)
+    page = parse_page(raw)
+    by_week = {w.week_number: w for w in page.calendar}
+    for week_number in range(1, 16):
+        assert len(by_week[week_number].days) == 7, f"semana {week_number} tiene {len(by_week[week_number].days)} días"
+    assert len(by_week[16].days) <= 7
+
+    week6_dates = {str(d.date) for d in by_week[6].days}
+    assert "2026-11-01" in week6_dates
+    week7_dates = {str(d.date) for d in by_week[7].days}
+    assert week7_dates == {
+        "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05",
+        "2026-11-06", "2026-11-07", "2026-11-08",
+    }
+
+
 def test_page0_notes(sample_pdf_path):
     """[A] Las 4 notas de la página 0 se parsean sobre el modelo (no contando
     la palabra "impartir" en texto plano) y la validación cruzada contra el
