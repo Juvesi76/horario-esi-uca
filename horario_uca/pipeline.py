@@ -197,6 +197,14 @@ class GenerateOutcome:
     resolve_warnings: list[ParseWarning] = field(default_factory=list)
     conflicts: list[ScheduleConflict] = field(default_factory=list)
     events: list[CalendarEvent] = field(default_factory=list)
+    generated_at: str | None = None
+    """ISO 8601 — la más reciente entre `generation_timestamp` de las
+    páginas realmente usadas por la selección (puede haber varias, con
+    fechas distintas, si la selección toca más de un curso/cohorte). Ver
+    `parse/header.py` para por qué es por página, no del documento."""
+    approved_at: str | None = None
+    """ISO — `approval_date` de la primera página relevante que lo trae
+    (es la misma en todas las páginas de un documento, verificado)."""
     exams: list[ExamEntry] = field(default_factory=list)
     exam_infos: list[ParseInfo] = field(default_factory=list)
     exam_convocatorias_incluidas: list[str] = field(default_factory=list)
@@ -277,7 +285,37 @@ def generate_calendar(
             exams_available.extend(e for e in exam_calendar.entries if e.code in relevant_codes)
             convocatorias_disponibles.append(exam_calendar.convocatoria)
 
-    html = build_html(filtered, legend=legend, title=titulo, exams=exams, exams_available=exams_available)
+    # Por (curso, itinerario), no solo acrónimo — el mismo acrónimo puede
+    # existir en páginas de curso distinto (p.ej. "CAL" en 1ºA Y en 1ºB,
+    # cada una con su propia fecha de generación); filtrar solo por
+    # acrónimo cogería la fecha de una página que la selección real ni
+    # siquiera toca. `report.py::relevant_pages` sí filtra solo por
+    # acrónimo, pero ahí una página de más solo añade avisos irrelevantes
+    # al informe (inofensivo); aquí cogería la fecha equivocada
+    # (incorrecto de verdad), así que necesita ser preciso.
+    relevant_pages = [
+        p
+        for p in pages
+        if any(
+            p.curso == s.curso
+            and (s.itinerario is None or p.itinerario == s.itinerario)
+            and any(b.subject_acronym == s.acronym for b in p.blocks)
+            for s in selections
+        )
+    ]
+    generated_at = max(
+        (p.generation_timestamp for p in relevant_pages if p.generation_timestamp), default=None
+    )
+    approved_at = next((p.approval_date for p in relevant_pages if p.approval_date), None)
+
+    html = build_html(
+        filtered,
+        legend=legend,
+        title=titulo,
+        exams=exams,
+        exams_available=exams_available,
+        generated_at=generated_at,
+    )
     ics = build_ics(filtered, calendar_name=titulo, exams=exams)
 
     return GenerateOutcome(
@@ -286,6 +324,8 @@ def generate_calendar(
         resolve_warnings=resolve_warnings,
         conflicts=conflicts,
         events=filtered,
+        generated_at=generated_at,
+        approved_at=approved_at,
         exams=exams,
         exam_infos=exam_infos,
         exam_convocatorias_incluidas=convocatorias_incluidas,

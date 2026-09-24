@@ -3,6 +3,9 @@ name = "horario-uca"
 version = "0.1.0"
 description = "Convierte los horarios en PDF de la Escuela Superior de Ingeniería (UCA) en un calendario HTML con fechas reales y export a .ics"
 readme = "README.md"
+authors = [
+    { name = "Juan Vecina Silva (Juvesi76)" },
+]
 requires-python = ">=3.11"
 dependencies = [
     # Version fijada, no >=: `import fitz` avisa que se retirará en una

@@ -995,6 +995,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .event-detail button.close {
     background: transparent; border: none; color: var(--muted-text); font-size: 20px; line-height: 1; padding: 4px 6px;
   }
+  /* Crédito de autoría — viaja con el fichero descargado. `--muted-text`
+     (#888/#9a9aa2) da solo 3.25:1 contra `--bg` en claro, por debajo de
+     AA: se usa `--weekday-label-text` en su lugar, ya AA en los dos temas
+     (6.83:1 claro / 8.41:1 oscuro, medido contra `--bg`). */
+  .app-footer { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); text-align: center; }
+  .app-footer p { margin: 0; font-size: 11px; color: var(--weekday-label-text); }
+  .app-footer a { color: inherit; }
 </style>
 </head>
 <body>
@@ -1027,6 +1034,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="legend" id="legend"></div>
   <div id="content"></div>
 </main>
+<footer class="app-footer">
+  __GENERATED_NOTE__
+  <p>Desarrollado por Juan Vecina Silva (<a href="https://github.com/Juvesi76" rel="noopener" target="_blank">Juvesi76</a>)</p>
+</footer>
 <div id="event-detail" class="event-detail" hidden></div>
 <script>
 const EVENTS = __EVENTS_JSON__;
@@ -1109,6 +1120,21 @@ function diaDeIso(iso) {
 function movedSentence(e) {
   if (!e.movedFrom) return null;
   return `Esta clase se traslada del ${diaDeIso(e.movedFrom)} ${fechaLarga(e.movedFrom)} al ${diaDeIso(e.date)} ${fechaLarga(e.date)}.`;
+}
+
+// Misma idea que `examConflictShortLabel` más abajo, para el choque entre
+// clases: "choca con otro grupo" no decía con cuál, aunque el programa ya
+// lo sabe (mismo dato que `conflictSentence`, en frase corta) — usada en
+// el badge de la vista Semana y en el `title` del chip de Mes.
+function classConflictShortLabel(e) {
+  const other = CONFLICTS.find(c =>
+    (c.a.acronym === e.acronym && c.a.group === e.group && c.a.start === e.start && c.date === e.date) ||
+    (c.b.acronym === e.acronym && c.b.group === e.group && c.b.start === e.start && c.date === e.date)
+  );
+  if (!other) return "";
+  const rival = (other.a.acronym === e.acronym && other.a.group === e.group) ? other.b : other.a;
+  const rivalCurso = !other.mismoCurso && rival.curso ? ` (${rival.curso})` : "";
+  return `choca con ${rival.acronym} ${rival.group}${rivalCurso}`;
 }
 
 function conflictSentence(e) {
@@ -1502,7 +1528,7 @@ function renderEventChip(e) {
   const cls = ["event-chip", "pat-" + e.pattern];
   const conflict = isConflict(e);
   if (e.movedFrom) cls.push("moved");
-  const title = `${e.acronym} ${e.group} ${e.start}-${e.end}${e.room ? " · Aula " + e.room : ""}${e.movedFrom ? " (trasladado desde " + e.movedFrom + ")" : ""}${conflict ? " — ⚠ choca con otro grupo de la selección, ver aviso arriba" : ""}`;
+  const title = `${e.acronym} ${e.group} ${e.start}-${e.end}${e.room ? " · Aula " + e.room : ""}${e.movedFrom ? " (trasladado desde " + e.movedFrom + ")" : ""}${conflict ? " — ⚠ " + classConflictShortLabel(e) : ""}`;
   // El "⚠" en el propio texto no depende del color de fondo para leerse,
   // a diferencia del anillo — refuerzo adicional en la vista Mes, donde el
   // chip es pequeño (en la vista Semana ya existía una insignia de texto
@@ -1646,7 +1672,7 @@ function renderWeek() {
       const style = `background-color:${e.color};color:${e.textColor};--pattern-overlay:${e.patternOverlay};${conflict ? overlapBoxShadow(e) : ""}`;
       html += `<div class="${cls.join(' ')}" style="${style}" data-kind="class" data-i="${e._i}">
         <span class="time">${e.start}–${e.end}</span>
-        <span class="info">${e.acronym} ${e.group} · ${e.type}${e.room ? ' · Aula ' + e.room : ''}${e.movedFrom ? '<span class="moved-badge">trasladado de ' + e.movedFrom + '</span>' : ''}${conflict ? '<span class="moved-badge">⚠ choca con otro grupo</span>' : ''}</span>
+        <span class="info">${e.acronym} ${e.group} · ${e.type}${e.room ? ' · Aula ' + e.room : ''}${e.movedFrom ? '<span class="moved-badge">trasladado de ' + e.movedFrom + '</span>' : ''}${conflict ? '<span class="moved-badge">⚠ ' + classConflictShortLabel(e) + '</span>' : ''}</span>
       </div>`;
     });
     html += '</div>';
@@ -1861,6 +1887,14 @@ def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _format_fecha_corta(iso: str) -> str:
+    """"2026-09-15T16:04:00" o "2026-05-11" -> "15/09/2026" — el formato
+    exacto pedido para el aviso de fecha de generación, sin componente de
+    hora (la hora no aporta nada a "¿sigue siendo la versión vigente?")."""
+    y, m, d = iso[:10].split("-")
+    return f"{d}/{m}/{y}"
+
+
 def build_html(
     events: list[CalendarEvent],
     *,
@@ -1868,6 +1902,7 @@ def build_html(
     title: str = "Horario ESI (UCA)",
     exams: list[ExamEntry] | None = None,
     exams_available: list[ExamEntry] | None = None,
+    generated_at: str | None = None,
 ) -> str:
     """`exams_available` (opcional): exámenes de convocatorias relevantes
     para la selección pero no incluidas en el calendario — ver
@@ -1914,4 +1949,11 @@ def build_html(
     html = html.replace("__OVERLAP_RING__", _OVERLAP_RING_HEX)
     html = html.replace("__MARKER_RING_LIGHT__", _MARKER_RING_LIGHT_HEX)
     html = html.replace("__MARKER_RING_DARK__", _MARKER_RING_DARK_HEX)
+    generated_note = (
+        f'<p>Horario generado el {_format_fecha_corta(generated_at)}. '
+        "Comprueba en la web de la ESI que sigue siendo la versión vigente.</p>"
+        if generated_at
+        else ""
+    )
+    html = html.replace("__GENERATED_NOTE__", generated_note)
     return html

@@ -119,6 +119,14 @@ class SchedulePage(BaseModel):
     curso: str | None
     semestre: int | None
     itinerario: str | None
+    generation_timestamp: str | None = None
+    """ISO 8601 (p.ej. "2026-09-15T16:04:00") — de la marca de 14 dígitos
+    del pie de página. Es POR PÁGINA, no del documento entero: verificado
+    que varía entre páginas de un mismo PDF (ver `parse/header.py`)."""
+    approval_date: str | None = None
+    """ISO (p.ej. "2026-05-11") — de la frase "Aprobado en Junta de
+    Escuela..." de la cabecera. A diferencia de `generation_timestamp`,
+    esta sí es la misma en todas las páginas de un documento."""
     legend: list[SubjectLegendEntry] = []
     blocks: list[ClassBlock] = []
     calendar: list[CalendarWeek] = []

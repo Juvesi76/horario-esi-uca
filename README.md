@@ -20,6 +20,76 @@ RFC 5545 (con `VTIMEZONE` de Europe/Madrid y `UID` estables entre
 regeneraciones). También lee el calendario de exámenes oficial (PDF aparte)
 y marca los choques entre exámenes o entre un examen y una clase.
 
+## Cuando salga el horario del curso siguiente
+
+Esta sección es para dentro de un año, cuando la ESI publique los PDFs del
+curso siguiente y quieras comprobar en dos minutos si la herramienta sigue
+funcionando, sin tener que releer el resto de este documento ni el código.
+
+**1. Descarga los PDFs nuevos.** El horario de tu grado (y, si quieres,
+el calendario de exámenes) desde la misma web de horarios de siempre —
+ver "De dónde descargar los PDFs" justo debajo si no recuerdas de dónde.
+Guárdalos en `data/`, con el nombre que quieras.
+
+**2. Ejecuta el diagnóstico**, con el PDF nuevo (y, si tienes tiempo, el
+antiguo también, para comparar):
+
+```bash
+horario diagnostico data/GII_horario2627_2728.pdf
+```
+
+Acepta varios PDFs a la vez si quieres comprobar más de un grado en una
+sola pasada:
+
+```bash
+horario diagnostico data/GII_horario2627_2728.pdf data/GIA_horario2728.pdf
+```
+
+Termina con una línea muy clara: **`VEREDICTO: sin anomalías.`** (nada
+que hacer, la herramienta sigue funcionando con el PDF nuevo tal cual) o
+**`VEREDICTO: hay cosas que mirar`** con la lista de qué exactamente. El
+código de salida es `0` si todo está limpio y `1` si hay algo que mirar
+— útil si algún día quieres automatizar esta comprobación (p.ej. un cron
+o una acción de GitHub que te avise).
+
+**3. Si sale "sin anomalías"**, no hay nada más que hacer — sube el PDF
+nuevo a `data/` con el nombre `GII_horario2627.pdf` (sustituyendo al
+antiguo) y ya está: todo lo que la herramienta sabe del PDF lo lee de
+ahí, no hay ninguna fecha ni curso "hardcodeado" en el código a mano.
+
+**Si sale "hay cosas que mirar"**, cada sección marcada del informe te
+dice EXACTAMENTE qué mirar y en qué página — no hace falta entender todo
+el proyecto para investigar una anomalía concreta:
+
+- **Un código de `ParseWarning` que antes daba 0** (calendario_vacio,
+  bloque_sin_leyenda, evento_en_dia_no_lectivo, etc.) → algo en ESA página
+  concreta no se está leyendo como se esperaba. Empieza por
+  `horario debug PDF --page N` (genera un PNG con los rectángulos que el
+  parser detectó de verdad, en verde, y los que no supo interpretar, en
+  rojo) para ver de un vistazo si el problema salta a la vista.
+- **Una letra de grupo fuera de `GROUP_TYPES`** o **un formato de `curso`
+  desconocido** → la ESI ha cambiado una convención de texto (una letra de
+  grupo nueva, un formato de curso distinto de "1ºA"/"3º"/"4º"...). No
+  rompe el parseo (el modelo interno acepta cualquier texto), pero puede
+  que el front web no lo trate bien todavía (p.ej. la fusión de cohortes
+  A/B del paso 2, que sí asume el patrón `\d º[AB]?`) — busca esa letra o
+  ese formato de curso en el código para ver dónde asume el formato
+  antiguo.
+- **Un layout de minicalendario desconocido** → geometría nueva que
+  `calendar.py` no sabe clasificar como "horizontal" ni "apilado". Es la
+  categoría más seria de las tres: probablemente significa que hay que
+  tocar código, no solo una constante. Empieza por `horario debug` en esa
+  página para ver la geometría real.
+- Si nada de esto es evidente, abre un issue o pide ayuda con el informe
+  completo de `horario diagnostico` pegado — dice la página y el código
+  exactos, no hace falta que reproduzcas el problema de palabra.
+
+Ninguna de estas anomalías bloquea la app por sí sola (el parser nunca
+lanza una excepción que tumbe una página completa) — pero cuantas más
+anomalías reales queden sin mirar, menos fiable es el
+calendario que le llega al alumno, así que merece la pena dedicarle los
+dos minutos.
+
 ## De dónde descargar los PDFs
 
 Este repositorio **no incluye ningún PDF de la UCA** — son documentos con
@@ -358,3 +428,8 @@ con GPLv3 — confirmado con `pip show`, no de memoria):
 Cada fichero `.py` propio del proyecto lleva la cabecera de licencia
 recomendada por la propia GPLv3 ("How to Apply These Terms to Your New
 Programs", al final de [LICENSE](LICENSE)).
+
+## Autoría
+
+Desarrollado por Juan Vecina Silva
+([Juvesi76](https://github.com/Juvesi76)).

@@ -26,12 +26,66 @@ cabecera, devuelve los campos que falten a `None` y un `ParseWarning`.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from horario_uca.extract import RawPage, RawSpan
 from horario_uca.model import ParseWarning
 
 _LABELS = ("Año académico", "Curso", "Semestre")
+
+# Marca de generación por página, en el pie ("20260915160400" = 2026-09-15
+# 16:04:00, `YYYYMMDDHHMMSS`) — verificado sobre las 13 páginas/documentos
+# de referencia (10 horarios + 3 calendarios de exámenes): siempre parsea
+# como fecha/hora válida, nunca faltó en ninguna página comprobada, pero
+# **varía por PÁGINA dentro de un mismo documento** (12 valores distintos
+# en las 24 páginas de GII, no uno solo) — no es una fecha de generación
+# del documento entero, es de cuándo se generó/actualizó esa página
+# concreta. Un valor por página en el modelo, nunca agregado a un único
+# valor "del documento" en esta capa — quien consuma varias páginas a la
+# vez (una selección multi-curso) decide cómo agregarlas (ver
+# `pipeline.py::generate_calendar`, que usa la más reciente entre las
+# páginas realmente tocadas por la selección).
+_GENERATION_RE = re.compile(r"^\d{14}$")
+
+# "Aprobado en Junta de Escuela (11/5/2026)" en los horarios,
+# "Aprobado en Junta de Escuela en el 21/7/2026" en los calendarios de
+# exámenes — la REDACCIÓN varía entre los dos tipos de documento, así que
+# la búsqueda no fija la frase completa: busca cualquier span que
+# contenga "Aprobado" y le extrae la primera fecha D/M/AAAA que encuentre
+# dentro, sin importar cómo esté rodeada. A diferencia de la marca de
+# generación, esta fecha es la MISMA en todas las páginas de un documento
+# (verificado en los 13 documentos de referencia) — un único valor por
+# página en el modelo de todas formas, por la misma razón que
+# `academic_year`/`curso`: cada `SchedulePage` es autocontenida.
+_APPROVAL_DATE_RE = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
+
+
+def _parse_generation_timestamp(raw: RawPage) -> datetime | None:
+    for s in raw.spans:
+        text = s.text.strip()
+        if _GENERATION_RE.fullmatch(text):
+            try:
+                return datetime.strptime(text, "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_approval_date(raw: RawPage) -> date | None:
+    for s in raw.spans:
+        if "Aprobado" not in s.text:
+            continue
+        m = _APPROVAL_DATE_RE.search(s.text)
+        if not m:
+            continue
+        day, month, year = (int(g) for g in m.groups())
+        try:
+            return date(year, month, day)
+        except ValueError:
+            continue
+    return None
 # Un doble grado ("Doble grado en Ingeniería X e Ingeniería Y") NO empieza
 # por "Grado en Ingeniería" — descubierto midiendo el offset título→segunda
 # línea contra PDFs de otros grados: `title_span` salía `None` en TODAS las
@@ -87,6 +141,8 @@ class HeaderInfo:
     curso: str | None
     semestre: int | None
     itinerario: str | None
+    generation_timestamp: datetime | None
+    approval_date: date | None
 
 
 def _x_overlap(a: RawSpan, b: RawSpan) -> bool:
@@ -175,6 +231,13 @@ def parse_header(raw: RawPage) -> tuple[HeaderInfo, list[ParseWarning]]:
             break
 
     return (
-        HeaderInfo(academic_year=academic_year, curso=curso, semestre=semestre, itinerario=itinerario),
+        HeaderInfo(
+            academic_year=academic_year,
+            curso=curso,
+            semestre=semestre,
+            itinerario=itinerario,
+            generation_timestamp=_parse_generation_timestamp(raw),
+            approval_date=_parse_approval_date(raw),
+        ),
         warnings,
     )

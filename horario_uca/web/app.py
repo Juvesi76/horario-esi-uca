@@ -482,4 +482,6 @@ async def api_generar(
         examenes_incluidos=len(outcome.exams),
         examenes_convocatorias_incluidas=outcome.exam_convocatorias_incluidas,
         examenes_convocatorias_disponibles=outcome.exam_convocatorias_disponibles,
+        generado_el=outcome.generated_at,
+        aprobado_el=outcome.approved_at,
     )

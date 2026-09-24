@@ -312,12 +312,22 @@
   }
   .app-footer p { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; margin: 0; }
   .app-footer a { color: inherit; text-decoration: underline; }
+  /* Crédito de autoría: una segunda línea más pequeña, mismo color ya
+     verificado AA (≥5.5:1 en los dos temas) que el aviso de arriba — más
+     discreto por tamaño, no por contraste (bajar el contraste aquí es
+     justo el fallo típico de un pie de página). */
+  .app-footer-credit { margin-top: 4px; font-size: 10.5px; }
 
   /* Step 4: result */
   .avisos-note {
     margin-top: 16px; padding: 11px 13px; border-radius: var(--radius-sm); background: var(--paper-2);
     border: 1px solid var(--grid); font-size: 13px; color: var(--ink-muted); line-height: 1.5;
   }
+  /* Una línea de texto suelta, sin caja — a propósito más discreta que
+     `.avisos-note` (que sí es una caja con borde): esto es información de
+     contexto sobre la fuente de datos, no un aviso de que algo pueda
+     faltar. */
+  .generated-note { margin-top: 10px; font-size: 12.5px; color: var(--ink-muted); line-height: 1.4; }
   .exam-add-box {
     margin-top: 16px; padding: 14px; border: 1.5px dashed var(--grid-strong); border-radius: var(--radius-md);
   }
@@ -447,6 +457,7 @@
       <p class="step-help">Este es tu horario con fechas reales, ya listo para guardar o llevar en el móvil.</p>
       <div id="conflict-banner-final"></div>
       <div id="avisos-note"></div>
+      <div id="generated-note"></div>
       <div id="exam-add-section"></div>
       <div class="preview-frame"><iframe id="preview-iframe" title="Vista previa de tu calendario"></iframe></div>
     </section>
@@ -462,6 +473,7 @@
       <a href="https://github.com/Juvesi76/horario-esi-uca" id="footer-source-link" rel="noopener" target="_blank">Código fuente</a>
       (GPLv3 — usa PyMuPDF, AGPL-3.0)
     </p>
+    <p class="app-footer-credit">Desarrollado por Juan Vecina Silva (<a href="https://github.com/Juvesi76" rel="noopener" target="_blank">Juvesi76</a>)</p>
   </footer>
 </div>
 
@@ -554,6 +566,14 @@
   function fechaLarga(iso) {
     const [y, m, d] = iso.split("-").map(Number);
     return `${d} de ${MESES[m - 1]} de ${y}`;
+  }
+
+  // "2026-09-15T16:04:00" o "2026-05-11" -> "15/09/2026" — mismo formato
+  // y mismo criterio (sin hora) que `_format_fecha_corta` en
+  // `render/html.py`, para el aviso de fecha de generación.
+  function fechaCorta(iso) {
+    const [y, m, d] = iso.slice(0, 10).split("-");
+    return `${d}/${m}/${y}`;
   }
 
   // ---------- Navegación entre pasos ----------
@@ -1407,6 +1427,14 @@
     if (r.avisos) {
       avisos.appendChild(el("p", { class: "avisos-note" }, [
         "Puede faltar algún detalle de este horario — lo leemos automáticamente del PDF y alguna parte puede no haberse interpretado bien. Compruébalo contra el documento original si algo no cuadra.",
+      ]));
+    }
+
+    const generatedNote = $("generated-note");
+    generatedNote.innerHTML = "";
+    if (r.generado_el) {
+      generatedNote.appendChild(el("p", { class: "generated-note" }, [
+        `Horario generado el ${fechaCorta(r.generado_el)}. Comprueba en la web de la ESI que sigue siendo la versión vigente.`,
       ]));
     }
 

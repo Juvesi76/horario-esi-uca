@@ -93,3 +93,9 @@ class GenerarRespuesta(BaseModel):
     pero NO incluidas automáticamente (regla de inclusión sin verificar
     para esa convocatoria, ver `select/exams.py`) — el front las ofrece
     para añadir con un solo clic, nunca las deja simplemente ausentes."""
+    generado_el: str | None = None
+    """ISO — fecha/hora de generación de la página del PDF más reciente
+    entre las que realmente alimentan esta selección (ver
+    `pipeline.py::generate_calendar`). `None` si no se pudo leer."""
+    aprobado_el: str | None = None
+    """ISO — fecha de aprobación en Junta de Escuela del PDF de origen."""

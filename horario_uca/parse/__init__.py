@@ -161,6 +161,8 @@ def parse_page(raw: RawPage) -> SchedulePage:
         curso=header.curso,
         semestre=header.semestre,
         itinerario=header.itinerario,
+        generation_timestamp=header.generation_timestamp.isoformat() if header.generation_timestamp else None,
+        approval_date=header.approval_date.isoformat() if header.approval_date else None,
         legend=legend,
         blocks=blocks,
         calendar=calendar_weeks,
