@@ -802,6 +802,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
   @media (max-width: 480px) {
     .day-cell.has-conflict::after { display: block; }
   }
+  /* Marca de "hoy" — nunca rojo, reservado a los avisos de choque. Un
+     anillo interior (no cambia el tamaño de la celda, a diferencia de un
+     `border`) con el mismo azul ya usado para "vista activa"
+     (`--btn-border-active`/`--btn-bg-active`), así que no introduce ningún
+     token de color nuevo. `inset` se combina con la sombra suave que la
+     celda ya tenía — reemplaza el `box-shadow` entero de `.day-cell`
+     (mayor especificidad), no lo añade aparte. */
+  .day-cell.today { box-shadow: inset 0 0 0 2px var(--btn-border-active), 0 1px 2px var(--card-shadow-soft); }
+  .day-cell.today .day-number { color: var(--btn-border-active); font-weight: 700; }
   .day-number { font-size: 12px; color: var(--muted-text); margin-bottom: 4px; }
   .event-chip {
     position: relative;
@@ -884,6 +893,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .week-view { display: flex; flex-direction: column; gap: 10px; }
   .week-day { background: var(--card-bg); border-radius: 8px; padding: 10px 14px; box-shadow: 0 1px 3px var(--card-shadow); }
   .week-day h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--week-day-heading); }
+  /* Mismo azul que la marca de "hoy" de la vista Mes (`--btn-border-active`)
+     — consistente entre las dos vistas, nunca rojo. */
+  .today-badge {
+    display: inline-block; font-size: 10px; font-weight: 700; color: #fff;
+    background: var(--btn-border-active); padding: 1px 7px; border-radius: 999px;
+    margin-left: 6px; vertical-align: middle;
+  }
+  .empty-today { margin: 0; font-size: 12.5px; color: var(--muted-text); }
   .week-event {
     position: relative;
     display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; border-radius: 6px; margin-bottom: 6px; color: #fff;
@@ -1021,6 +1038,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <button id="btn-view-exams">Exámenes</button>
   </div>
   <div class="period-nav" id="period-nav">
+    <button id="btn-today">Hoy</button>
     <button id="btn-prev">&larr;</button>
     <span id="period-label"></span>
     <button id="btn-next">&rarr;</button>
@@ -1548,25 +1566,76 @@ function isoLocal(date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
 }
 
-// Incluye las fechas de EXAMS_ON_CALENDAR, no solo EVENTS — un examen puede
-// caer en un mes/semana sin ninguna clase (típico: fuera del periodo
-// lectivo), y sin esto la paginación de Mes/Semana lo saltaría en
-// silencio, invisible hasta que alguien navegara ahí por casualidad. Los
-// exámenes solo "disponibles" (no incluidos) no cuentan aquí — no están
-// en el calendario todavía, no deben forzar una página nueva.
-let months = [...new Set([...EVENTS, ...EXAMS_ON_CALENDAR].map(e => e.date.slice(0,7)))].sort();
-if (months.length === 0) months = [isoLocal(new Date()).slice(0,7)];
-let monthIndex = 0;
-
 function mondayOf(date) {
   const d = new Date(date);
   const wd = (d.getDay() + 6) % 7; // 0=lunes
   d.setDate(d.getDate() - wd);
   return d;
 }
-let weeks = [...new Set([...EVENTS, ...EXAMS_ON_CALENDAR].map(e => isoLocal(mondayOf(parseDate(e.date)))))].sort();
-if (weeks.length === 0) weeks = [isoLocal(mondayOf(new Date()))];
-let weekIndex = 0;
+
+function monthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}`;
+}
+
+// `months`/`weeks` son RANGOS CONTIGUOS desde el primer evento/examen hasta
+// el último — nunca el conjunto disperso de "meses/semanas que tienen
+// contenido" (lo que había antes). Un mes o semana sin ninguna clase (el
+// hueco entre semestres, p.ej. enero-febrero) tiene que seguir siendo
+// navegable y mostrarse vacío — un conjunto disperso lo habría hecho
+// desaparecer de la paginación por completo, saltando directo al
+// siguiente mes/semana CON contenido en vez de enseñar el hueco. Incluye
+// las fechas de EXAMS_ON_CALENDAR, no solo EVENTS — un examen puede caer
+// fuera del periodo lectivo de cualquier evento de clase. Los exámenes
+// solo "disponibles" (no incluidos) no cuentan — no están en el
+// calendario todavía, no deben ensanchar el rango.
+const ALL_DATES = [...EVENTS, ...EXAMS_ON_CALENDAR].map(e => e.date).sort();
+
+let months, weeks;
+if (ALL_DATES.length === 0) {
+  months = [monthKey(new Date())];
+  weeks = [isoLocal(mondayOf(new Date()))];
+} else {
+  const firstDate = parseDate(ALL_DATES[0]);
+  const lastDate = parseDate(ALL_DATES[ALL_DATES.length - 1]);
+
+  months = [];
+  const monthCursor = new Date(firstDate.getFullYear(), firstDate.getMonth(), 1);
+  const lastMonthStart = new Date(lastDate.getFullYear(), lastDate.getMonth(), 1);
+  while (monthCursor <= lastMonthStart) {
+    months.push(monthKey(monthCursor));
+    monthCursor.setMonth(monthCursor.getMonth() + 1);
+  }
+
+  weeks = [];
+  const weekCursor = mondayOf(firstDate);
+  const lastMonday = mondayOf(lastDate);
+  while (weekCursor <= lastMonday) {
+    weeks.push(isoLocal(weekCursor));
+    weekCursor.setDate(weekCursor.getDate() + 7);
+  }
+}
+
+// Índice del mes/semana que contiene `key` — si `key` cae ANTES del rango,
+// el primero (quien abre el calendario antes de que empiecen las clases,
+// p.ej. en agosto, ve el primer mes — comportamiento ya existente); si cae
+// DESPUÉS, el último (nunca una pantalla vacía porque "hoy" quedó fuera de
+// rango). Dentro del rango, incluido cualquier hueco, se encuentra
+// siempre: `months`/`weeks` son contiguos por construcción, así que
+// `indexOf` nunca falla salvo fuera de los dos extremos. Comparación por
+// texto (`"YYYY-MM"`/`"YYYY-MM-DD"`), nunca por `Date`: el orden
+// lexicográfico de ISO ya coincide con el cronológico.
+function indexFor(list, key) {
+  const idx = list.indexOf(key);
+  if (idx !== -1) return idx;
+  return key < list[0] ? 0 : list.length - 1;
+}
+
+// "Hoy" se calcula aquí, al cargar — SIEMPRE con los getters locales
+// (ver `isoLocal`/`monthKey`), nunca `.toISOString()` (el bug ya conocido
+// de esta misma plantilla, desplazaba un día en cualquier huso con
+// offset positivo sobre UTC).
+let monthIndex = indexFor(months, monthKey(new Date()));
+let weekIndex = indexFor(weeks, isoLocal(mondayOf(new Date())));
 
 let view = "month";
 
@@ -1672,6 +1741,7 @@ function renderMonth() {
   const first = new Date(y, m-1, 1);
   const startOffset = (first.getDay() + 6) % 7; // lunes=0
   const daysInMonth = new Date(y, m, 0).getDate();
+  const todayKey = isoLocal(new Date());
 
   const byDate = {};
   EVENTS.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push({ item: e, chip: renderEventChip, isExam: false }); });
@@ -1683,8 +1753,10 @@ function renderMonth() {
   for (let day = 1; day <= daysInMonth; day++) {
     const key = dateKey(y, m-1, day);
     const dayItems = (byDate[key] || []).slice().sort((a,b) => toMinutes(a.item.start)-toMinutes(b.item.start));
-    const cellCls = dayItems.length > 0 && dayHasConflict(dayItems) ? "day-cell has-conflict" : "day-cell";
-    html += `<div class="${cellCls}"><div class="day-number">${day}</div>`;
+    const cellClasses = ["day-cell"];
+    if (dayItems.length > 0 && dayHasConflict(dayItems)) cellClasses.push("has-conflict");
+    if (key === todayKey) cellClasses.push("today");
+    html += `<div class="${cellClasses.join(' ')}"><div class="day-number">${day}</div>`;
     html += '<div class="day-chips">';
     dayItems.forEach(({item, chip}) => html += chip(item));
     html += '</div>';
@@ -1700,18 +1772,27 @@ function renderWeek() {
   document.getElementById("period-label").textContent =
     `${monday.getDate()} ${MES_NOMBRE[monday.getMonth()].slice(0,3)} – ${sunday.getDate()} ${MES_NOMBRE[sunday.getMonth()].slice(0,3)} ${sunday.getFullYear()}`;
 
+  const todayKey = isoLocal(new Date());
   let html = '<div class="week-view">';
   let any = false;
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday); d.setDate(d.getDate()+i);
     const key = isoLocal(d);
+    const isToday = key === todayKey;
     const dayEvents = EVENTS.filter(e => e.date === key);
     const dayExams = EXAMS_ON_CALENDAR.filter(e => e.date === key);
     const dayItems = [...dayEvents.map(e => ({item: e, isExam: false})), ...dayExams.map(e => ({item: e, isExam: true}))]
       .sort((a,b) => toMinutes(a.item.start)-toMinutes(b.item.start));
-    if (dayItems.length === 0) continue;
+    // Un día vacío normalmente no pinta ninguna fila (lista plana de solo
+    // los días con algo) — pero el día de HOY sí se fuerza a aparecer,
+    // aunque esté vacío, porque si no la marca de "hoy" no tendría dónde
+    // ir: es la misma idea que "la semana vacía se muestra igual, es
+    // información correcta", aplicada al día concreto que necesita la marca.
+    if (dayItems.length === 0 && !isToday) continue;
     any = true;
-    html += `<div class="week-day"><h3>${DIA_NOMBRE[i]} ${d.getDate()} ${MES_NOMBRE[d.getMonth()]}</h3>`;
+    const todayBadge = isToday ? ' <span class="today-badge">Hoy</span>' : '';
+    html += `<div class="week-day${isToday ? ' today' : ''}"><h3>${DIA_NOMBRE[i]} ${d.getDate()} ${MES_NOMBRE[d.getMonth()]}${todayBadge}</h3>`;
+    if (dayItems.length === 0) html += '<p class="empty-today">Sin clases hoy</p>';
     dayItems.forEach(({item: e, isExam}) => {
       if (isExam) {
         const cls = ["week-event", "exam", "pat-" + e.pattern];
@@ -1877,6 +1958,15 @@ document.getElementById("btn-prev").addEventListener("click", () => {
 document.getElementById("btn-next").addEventListener("click", () => {
   if (view === "month") monthIndex = Math.min(months.length-1, monthIndex+1);
   else weekIndex = Math.min(weeks.length-1, weekIndex+1);
+  render();
+});
+// Vuelve a "hoy" en la vista actual — la navegación ya puede alejarse del
+// día de hoy (←/→, o el salto directo de un marcador de Mes a su semana),
+// así que hace falta un camino de vuelta explícito.
+document.getElementById("btn-today").addEventListener("click", () => {
+  const now = new Date();
+  if (view === "month") monthIndex = indexFor(months, monthKey(now));
+  else if (view === "week") weekIndex = indexFor(weeks, isoLocal(mondayOf(now)));
   render();
 });
 
